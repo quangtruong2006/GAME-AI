@@ -245,7 +245,9 @@ class Stage1Maze:
 
         # Tính path cost
         self.path_cost = len(self.path) + 1 if self.path else 0
-
+#  Nếu tìm được đường đi (path có phần tử) -> Mở khóa chặng 2
+        if len(self.path) > 0:
+            self.stage_manager.unlock_stage("stage2")
     def update(self):
         pass
 
