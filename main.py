@@ -5,16 +5,24 @@ import config
 
 from stages.menu import MainMenu
 from stages.stage1_maze import Stage1Maze
-
+from stages.stage_select import StageSelect
+from stages.stage2_city import Stage2City
 class StageManager:
     def __init__(self, screen):
         self.screen = screen
+        # Mảng lưu danh sách các chặng đã được mở (Mặc định chỉ mở stage1)
+        self.unlocked_stages = ["stage1"]
         self.stages = {
             "menu":   MainMenu(screen, self),
-            "stage1": Stage1Maze(screen, self)
+            "stage_select": StageSelect(screen, self),
+            "stage1": Stage1Maze(screen, self),
+            "stage2": Stage2City(screen, self)
         }
         self.current_stage = self.stages["menu"]
-
+# Thêm hàm này để các chặng khác gọi khi muốn mở khóa chặng tiếp theo
+    def unlock_stage(self, stage_name):
+        if stage_name not in self.unlocked_stages:
+            self.unlocked_stages.append(stage_name)
     def change_stage(self, stage_name):
         if stage_name in self.stages:
             self.current_stage = self.stages[stage_name]

@@ -1,4 +1,3 @@
-# File: stages/menu.py
 
 import pygame
 import config
@@ -76,7 +75,7 @@ class MainMenu:
     def _load_music(self):
 
         for filename in (
-            "menu_music.mp3",
+            "epic_music.mp3",
             "menu_music.ogg",
             "menu_music.wav"
         ):
@@ -166,9 +165,9 @@ class MainMenu:
 
                     if play_btn.collidepoint(event.pos):
 
-                        self._stop_music()
+                        #self._stop_music()
                         self.stage_manager.change_stage(
-                            "stage1"
+                            "stage_select"
                         )
 
                     elif exit_btn.collidepoint(event.pos):
@@ -182,9 +181,9 @@ class MainMenu:
 
                 if event.key == pygame.K_RETURN:
 
-                    self._stop_music()
+                    #self._stop_music()
                     self.stage_manager.change_stage(
-                        "stage1"
+                        "stage_select"
                     )
 
                 elif event.key == pygame.K_ESCAPE:
