@@ -1,51 +1,49 @@
 import time
+import math
+import heapq
 
-def heuristic(a, b):
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+def heuristic(nodes, u, v):
+    return math.hypot(nodes[u][0] - nodes[v][0], nodes[u][1] - nodes[v][1])
 
-def greedy_search(grid, start, goal):
-    start_time = time.time()
-    rows, cols = len(grid), len(grid[0])
+def greedy_search(nodes, edges, start, goal):
+    start_time = time.perf_counter()
     
-    if grid[start[0]][start[1]] == 99 or grid[goal[0]][goal[1]] == 99:
-        return [], [], 0, "0.0 ms"
+    if start is None or goal is None:
+        return [], [], 0, "0.0 ms", 0
 
-    frontier = [(heuristic(start, goal), start)]
-    reached = set()
-    parent = {start: None}
+    open_set = []
+    heapq.heappush(open_set, (heuristic(nodes, start, goal), start))
+    came_from = {}
+    visited = set([start])
     visited_order = []
-    found = False
+    nodes_expanded = 0
 
-    while frontier:
-        frontier.sort(key=lambda x: x[0])
-        _, n = frontier.pop(0)
-        
-        if n != start and n != goal:
-            visited_order.append(n)
+    while open_set:
+        current = heapq.heappop(open_set)[1]
+        visited_order.append(current)
+        nodes_expanded += 1
 
-        if n == goal:
-            found = True
-            break
+        if current == goal:
+            path = []
+            total_cost = 0
+            curr_trace = current
+            while curr_trace in came_from:
+                prev = came_from[curr_trace]
+                total_cost += edges[prev][curr_trace]["cost"]
+                path.append(curr_trace)
+                curr_trace = prev
+            path.append(start)
+            path.reverse()
+            
+            exec_time = f"{(time.perf_counter() - start_time)*1000:.2f} ms"
+            return path, visited_order, nodes_expanded, exec_time, total_cost
 
-        reached.add(n)
+        if current in edges:
+            for neighbor in edges[current]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    came_from[neighbor] = current
+                    heapq.heappush(open_set, (heuristic(nodes, neighbor, goal), neighbor))
 
-        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            m = (n[0] + dr, n[1] + dc)
-            if 0 <= m[0] < rows and 0 <= m[1] < cols and grid[m[0]][m[1]] != 99:
-                in_frontier = any(item[1] == m for item in frontier)
-                if not in_frontier and m not in reached:
-                    parent[m] = n
-                    frontier.append((heuristic(m, goal), m))
-
-    path = []
-    if found:
-        curr = goal
-        while curr is not None:
-            if curr != start and curr != goal:
-                path.append(curr)
-            curr = parent[curr]
-        path.reverse()
-
-    end_time = time.time()
-    exec_time = (end_time - start_time) * 1000
-    return path, visited_order, len(visited_order), f"{exec_time:.2f} ms"
+    exec_time = f"{(time.perf_counter() - start_time)*1000:.2f} ms"
+    return [], visited_order, nodes_expanded, exec_time, 0

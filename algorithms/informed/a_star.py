@@ -1,83 +1,57 @@
 import time
+import math
+import heapq
 
-def heuristic(a, b):
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+def heuristic(nodes, u, v):
+    # Tính khoảng cách đường chim bay giữa 2 Nút trên bản đồ
+    return math.hypot(nodes[u][0] - nodes[v][0], nodes[u][1] - nodes[v][1])
 
-def a_star(grid, start, goal):
-    start_time = time.time()
-    rows, cols = len(grid), len(grid[0])
+def a_star(nodes, edges, start, goal):
+    start_time = time.perf_counter()
     
-    # Đổi thành kiểm tra tường = 99
-    if grid[start[0]][start[1]] == 99 or grid[goal[0]][goal[1]] == 99:
-        return [], [], 0, "0.0 ms"
+    # Kiểm tra nếu chưa đặt điểm Start hoặc Goal
+    if start is None or goal is None:
+        return [], [], 0, "0.0 ms", 0
 
+    open_set = []
+    heapq.heappush(open_set, (0, start))
+    came_from = {}
     g_score = {start: 0}
-    frontier = [(heuristic(start, goal), start)]
-    reached = set()
-    parent = {start: None}
+    f_score = {start: heuristic(nodes, start, goal)}
     visited_order = []
-    found = False
+    nodes_expanded = 0
 
-    while frontier:
-        frontier.sort(key=lambda x: x[0])
-        f_n, n = frontier.pop(0)
+    while open_set:
+        # Lấy node có f_score nhỏ nhất ra khỏi hàng đợi
+        current = heapq.heappop(open_set)[1]
+        visited_order.append(current)
+        nodes_expanded += 1
 
-        if n != start and n != goal and n not in visited_order:
-            visited_order.append(n)
-
-        if n == goal:
-            found = True
-            break
-
-        reached.add(n)
-
-        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            m = (n[0] + dr, n[1] + dc)
+        # Nếu tìm thấy đích (Shizuka)
+        if current == goal:
+            path = []
+            curr_trace = current
+            while curr_trace in came_from:
+                path.append(curr_trace)
+                curr_trace = came_from[curr_trace]
+            path.append(start)
+            path.reverse()
             
-            # Đổi điều kiện check tường thành != 99
-            if 0 <= m[0] < rows and 0 <= m[1] < cols and grid[m[0]][m[1]] != 99:
-                cost_m = grid[m[0]][m[1]] # Đọc chi phí thực tế từ ô lưới (1, 3, 5, 8)
-                g_new_m = g_score[n] + cost_m
+            exec_time = f"{(time.perf_counter() - start_time)*1000:.2f} ms"
+            return path, visited_order, nodes_expanded, exec_time, g_score[goal]
+
+        # Duyệt qua các con đường (edges) nối với node hiện tại
+        if current in edges:
+            for neighbor, data in edges[current].items():
+                # data["cost"] chính là chi phí kẹt xe/quốc lộ/metro mà ông đã set
+                tentative_g_score = g_score[current] + data["cost"]
                 
-                in_frontier = False
-                frontier_idx = -1
-                for idx, item in enumerate(frontier):
-                    if item[1] == m:
-                        in_frontier = True
-                        frontier_idx = idx
-                        break
+                if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g_score
+                    f_score[neighbor] = tentative_g_score + heuristic(nodes, neighbor, goal)
+                    heapq.heappush(open_set, (f_score[neighbor], neighbor))
 
-                if m in reached:
-                    if g_new_m >= g_score.get(m, float('inf')):
-                        continue
-                    else:
-                        reached.remove(m)
-                        g_score[m] = g_new_m
-                        f_m = g_new_m + heuristic(m, goal)
-                        parent[m] = n
-                        frontier.append((f_m, m))
-
-                elif in_frontier:
-                    if g_new_m < g_score.get(m, float('inf')):
-                        g_score[m] = g_new_m
-                        f_m = g_new_m + heuristic(m, goal)
-                        parent[m] = n
-                        frontier[frontier_idx] = (f_m, m)
-                else:
-                    g_score[m] = g_new_m
-                    f_m = g_new_m + heuristic(m, goal)
-                    parent[m] = n
-                    frontier.append((f_m, m))
-
-    path = []
-    if found:
-        curr = goal
-        while curr is not None:
-            if curr != start and curr != goal:
-                path.append(curr)
-            curr = parent[curr]
-        path.reverse()
-
-    end_time = time.time()
-    exec_time = (end_time - start_time) * 1000
-    return path, visited_order, len(visited_order), f"{exec_time:.2f} ms"
+    # Chạy hết map mà không thấy đường (bị cụt)
+    exec_time = f"{(time.perf_counter() - start_time)*1000:.2f} ms"
+    return [], visited_order, nodes_expanded, exec_time, 0
