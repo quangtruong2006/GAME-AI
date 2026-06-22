@@ -1,12 +1,16 @@
-# File: main.py
 import pygame
 import sys
 import config
 
 from stages.menu import MainMenu
-from stages.stage1_maze import Stage1Maze
 from stages.stage_select import StageSelect
+from stages.stage1_maze import Stage1Maze
 from stages.stage2_city import Stage2City
+from stages.stage3_inventory import Stage3Inventory
+from stages.stage4_forest import Stage4Forest
+from stages.stage5_seal import Stage5Seal
+from stages.stage6_boss import Stage6Boss
+
 class StageManager:
     def __init__(self, screen):
         self.screen = screen
@@ -16,13 +20,19 @@ class StageManager:
             "menu":   MainMenu(screen, self),
             "stage_select": StageSelect(screen, self),
             "stage1": Stage1Maze(screen, self),
-            "stage2": Stage2City(screen, self)
+            "stage2": Stage2City(screen, self),
+            "stage3": Stage3Inventory(screen, self),
+            "stage4": Stage4Forest(screen, self),
+            "stage5": Stage5Seal(screen, self),
+            "stage6": Stage6Boss(screen, self)
         }
         self.current_stage = self.stages["menu"]
 # Thêm hàm này để các chặng khác gọi khi muốn mở khóa chặng tiếp theo
     def unlock_stage(self, stage_name):
         if stage_name not in self.unlocked_stages:
             self.unlocked_stages.append(stage_name)
+            print(f">>> ĐÃ MỞ KHÓA MÀN CHƠI: {stage_name}")
+
     def change_stage(self, stage_name):
         if stage_name in self.stages:
             self.current_stage = self.stages[stage_name]
@@ -37,7 +47,6 @@ class StageManager:
 
     def draw(self):
         self.current_stage.draw()
-
 
 def main():
     pygame.init()
