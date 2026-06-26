@@ -91,7 +91,7 @@ class Stage2City:
         self.edges = {}      
         self.start_node = None
         self.goal_node = None
-        self.map_file = "stage2_graph.json"
+        self.map_file = os.path.join("assets", "maps", "stage2_graph.json")
         
         self.left_panel_w = 220
         self.map_rect = pygame.Rect(self.left_panel_w, 0, self.sw - self.left_panel_w, self.sh)
@@ -234,6 +234,7 @@ class Stage2City:
         self.nobita_mode = "at_start"
         self.phase = "idle"
         self.msg = "Reset Path."
+        self.show_completion_menu = False
 
     def _get_shortest_path_unweighted(self, start, end):
         if start == end: return [start]
@@ -300,13 +301,20 @@ class Stage2City:
             if self.show_completion_menu:
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     cx, cy = self.sw // 2, self.sh // 2
+                    
                     if pygame.Rect(cx - 100, cy - 20, 200, 40).collidepoint(event.pos):
+                        self.show_completion_menu = False # <--- TẮT BẢNG
                         self.stage_manager.stages["stage_select"].trigger_unlock_animation("stage3")
                         self.stage_manager.change_stage("stage_select")
+                        
                     elif pygame.Rect(cx - 100, cy + 30, 200, 40).collidepoint(event.pos):
+                        self.show_completion_menu = False # <--- TẮT BẢNG
                         self._reset_results()
+                        
                     elif pygame.Rect(cx - 100, cy + 80, 200, 40).collidepoint(event.pos):
-                        self.stage_manager.change_stage("stage_select")
+                        self.show_completion_menu = False # <--- TẮT BẢNG
+                        self._reset_results() # Dọn sạch map cho lần sau vào lại
+                        self.stage_manager.change_stage("menu")
                 continue
             if self.slider_mouse.handle_event(event): self.search_speed = self.slider_mouse.value
             if self.slider_nobita.handle_event(event): self.nobita_speed = self.slider_nobita.value

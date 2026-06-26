@@ -14,8 +14,13 @@ from stages.stage6_boss import Stage6Boss
 class StageManager:
     def __init__(self, screen):
         self.screen = screen
-        # Mảng lưu danh sách các chặng đã được mở (Mặc định chỉ mở stage1)
+        # Mảng lưu danh sách các chặng đã được mở
         self.unlocked_stages = ["stage1"]
+        
+        # --- THÊM 2 BIẾN NÀY ĐỂ QUẢN LÝ HOẠT ẢNH NỔ KHÓA ---
+        self.current_stage_name = "menu"
+        self.trigger_unlock_effect = None 
+        
         self.stages = {
             "menu":   MainMenu(screen, self),
             "stage_select": StageSelect(screen, self),
@@ -27,7 +32,7 @@ class StageManager:
             "stage6": Stage6Boss(screen, self)
         }
         self.current_stage = self.stages["menu"]
-# Thêm hàm này để các chặng khác gọi khi muốn mở khóa chặng tiếp theo
+
     def unlock_stage(self, stage_name):
         if stage_name not in self.unlocked_stages:
             self.unlocked_stages.append(stage_name)
@@ -36,6 +41,7 @@ class StageManager:
     def change_stage(self, stage_name):
         if stage_name in self.stages:
             self.current_stage = self.stages[stage_name]
+            self.current_stage_name = stage_name # Cập nhật tên chặng hiện tại
         else:
             print(f"Không tìm thấy stage: {stage_name}")
 
@@ -44,6 +50,13 @@ class StageManager:
 
     def update(self):
         self.current_stage.update()
+        
+        # --- BẮT TÍN HIỆU ĐỂ NỔ VỠ KHÓA CHẶNG TIẾP THEO ---
+        if self.trigger_unlock_effect is not None:
+            if self.current_stage_name == "stage_select":
+                if hasattr(self.current_stage, 'trigger_unlock_animation'):
+                    self.current_stage.trigger_unlock_animation(self.trigger_unlock_effect)
+                self.trigger_unlock_effect = None
 
     def draw(self):
         self.current_stage.draw()
