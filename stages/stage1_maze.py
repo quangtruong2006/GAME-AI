@@ -927,20 +927,35 @@ class Stage1Maze:
                 mouse_pos = draw_partial(self.mouse_route, self.mouse_seg, self.mouse_t, col, thick)
 
         # --- Draw characters ---
-        def blit_scaled(img_raw, center_pos, target_h):
+        # --- Draw characters ---
+        def blit_scaled(img_raw, center_pos, target_h, offset_y=0):
             if not img_raw or center_pos is None:
                 return
+
             w, h = img_raw.get_size()
+
             scale = target_h / h
-            img = pygame.transform.smoothscale(img_raw, (int(w * scale), int(h * scale)))
-            self.screen.blit(img, img.get_rect(center=center_pos))
+
+            img = pygame.transform.smoothscale(
+                img_raw,
+                (int(w * scale), int(h * scale))
+            )
+
+            rect = img.get_rect(
+                center=(
+                    center_pos[0],
+                    center_pos[1] + offset_y
+                )
+            )
+
+            self.screen.blit(img, rect)
 
         char_h = max(40, int(sh * 0.08))
         mouse_h = max(22, int(sh * 0.045))
 
         # Goal always visible
         goal_pos = nodes_px.get(self.goal_node)
-        blit_scaled(self.goal_img_raw, goal_pos, char_h)
+        blit_scaled(self.goal_img_raw, goal_pos, char_h, -25)
 
         # Nobita position
         nobita_pos = nodes_px.get(self.start_node)
@@ -957,7 +972,7 @@ class Stage1Maze:
                 tt = max(0.0, min(1.0, self.nobita_t))
                 nobita_pos = (ax + (bx - ax) * tt, ay + (by - ay) * tt)
 
-        blit_scaled(self.start_img_raw, nobita_pos, char_h)
+        blit_scaled(self.start_img_raw, nobita_pos, char_h, -25)
 
         # Mouse icon
         if self.mouse_visible and self.mouse_img_raw:
