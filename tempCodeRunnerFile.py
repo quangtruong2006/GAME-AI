@@ -11,11 +11,11 @@ from stages.stage4_forest import Stage4Forest
 from stages.stage5_seal import Stage5Seal
 from stages.stage6_boss import Stage6Boss
 
-class StageManager:
+class StageManager: 
     def __init__(self, screen):
         self.screen = screen
         # Mảng lưu danh sách các chặng đã được mở
-        self.unlocked_stages = ["stage1", "stage2", "stage3", "stage4", "stage5", "stage6"]
+        self.unlocked_stages = ["stage1"]
         
         # --- THÊM 2 BIẾN NÀY ĐỂ QUẢN LÝ HOẠT ẢNH NỔ KHÓA ---
         self.current_stage_name = "menu"

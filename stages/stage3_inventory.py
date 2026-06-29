@@ -4,7 +4,7 @@ import math
 import os
 import random
 import json
-
+from ui.victory_panel import VictoryPanel
 from algorithms.local.hill_climbing import step_hill_climbing
 from algorithms.local.simulated_annealing import step_simulated_annealing
 from algorithms.local.local_beam_search import step_local_beam_search
@@ -85,6 +85,7 @@ class Stage3Inventory:
         # --- TRẠNG THÁI EDITOR ---
         self.is_editing = False 
         self.edit_mode = None  # 'add_item', 'add_obs', 'set_goal', 'erase'
+        self.victory_panel = VictoryPanel(screen, stage_manager)
 
     def _create_initial_grid(self):
         """Khởi tạo map: Ưu tiên Load từ file JSON đã save, nếu không có mới đẻ map trống"""
@@ -189,21 +190,38 @@ class Stage3Inventory:
                 "btn_erase": pygame.Rect(15, start_y + gap*3, self.panel_w - 30, 26),
                 "btn_save_map": pygame.Rect(15, start_y + gap*4, self.panel_w - 30, 32)
             })
-            # --- TỌA ĐỘ BẢNG POPUP THÀNH CÔNG CHẶNG 3 ---
-        popup_w, popup_h = 420, 220
-        popup_x = (self.sw - popup_w) // 2
-        popup_y = (self.sh - popup_h) // 2
-        start_btn_x = popup_x + 25
-        
-        ui.update({
-            "popup_panel": pygame.Rect(popup_x, popup_y, popup_w, popup_h),
-            "btn_popup_menu": pygame.Rect(start_btn_x, popup_y + 140, 110, 40),
-            "btn_popup_retry": pygame.Rect(start_btn_x + 130, popup_y + 140, 110, 40),
-            "btn_popup_next": pygame.Rect(start_btn_x + 260, popup_y + 140, 110, 40)
-        })
+            
         return ui
 
     def handle_events(self, events):
+        self.victory_panel.handle_events(events)
+        if self.victory_panel.visible:
+            return
+        # ✅ THÊM: Panel thất bại
+        if self.phase == "failed":
+            for event in events:
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    pw, ph = 400, 200
+                    px = (self.sw - pw) // 2
+                    py = (self.sh - ph) // 2
+                    
+                    retry_btn = pygame.Rect(px + 30, py + 130, 150, 40)
+                    back_btn = pygame.Rect(px + 220, py + 130, 150, 40)
+                    
+                    if retry_btn.collidepoint(event.pos):
+                        # Reset map và chạy lại
+                        self.grid = self._create_initial_grid()
+                        self.current_fitness = self.calculate_fitness(self.grid)
+                        self.steps_count = 0
+                        self.phase = "idle"
+                        self.temperature = 100.0
+                        self.beam_states = []
+                        return
+                        
+                    elif back_btn.collidepoint(event.pos):
+                        self.stage_manager.change_stage("stage_select")
+                        return
+            return
         ui = self._get_ui_rects()
         for event in events:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
@@ -211,25 +229,7 @@ class Stage3Inventory:
             
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 pos = event.pos
-                # --- NẾU AI CHẠY XONG (PHASE COMPLETED) THÌ HIỆN POPUP CHẶN CLICK MAP ---
-                if self.phase == "completed":
-                    if ui["btn_popup_menu"].collidepoint(pos):
-                        self.stage_manager.change_stage("stage_select")
-                        return
-                    elif ui["btn_popup_retry"].collidepoint(pos):
-                        # Reset lại để chơi lại map cũ
-                        self.grid = self._create_initial_grid()
-                        self.current_fitness = self.calculate_fitness(self.grid)
-                        self.steps_count = 0
-                        self.phase = "idle"
-                        return
-                    elif ui["btn_popup_next"].collidepoint(pos):
-                        # 1. Báo cho StageManager biết: "Hãy làm nổ khóa stage4 nhé!"
-                        self.stage_manager.trigger_unlock_effect = "stage4"
-                        
-                        # 2. Quay về màn hình chọn chặng
-                        self.stage_manager.change_stage("stage_select")
-                        return
+                
                 
                 # --- HÀNH VI TRÊN PANEL ĐIỀU KHIỂN ---
                 if pos[0] < self.panel_w:
@@ -332,8 +332,18 @@ class Stage3Inventory:
 
     def run_ai_step(self):
         if self.phase != "running": return
+        
+        # ✅ KIỂM TRA FITNESS = 100 -> THẮNG
         if self.current_fitness >= 100:
             self.phase = "completed"
+            
+            # ✅ HIỆN VICTORY PANEL
+            self.victory_panel.show(
+                next_stage_id     = "stage4",
+                next_stage_unlock = "stage4",
+                title    = "CHẶNG 3 HOÀN THÀNH!",
+                subtitle = f"Thu thập thành công sau {self.steps_count} bước!"
+            )
             return
 
         if self.selected_algorithm == "Hill Climbing": next_state = step_hill_climbing(self)
@@ -518,26 +528,42 @@ class Stage3Inventory:
 
         self._draw_btn(ui["btn_back"], "BACK", (231, 76, 60))
 
-        # 5. VẼ BẢNG POPUP CHÚC MỪNG THÀNH CÔNG LÊN TRÊN CÙNG
-        if self.phase == "completed":
-            shadow_bg = pygame.Surface((self.sw, self.sh), pygame.SRCALPHA)
-            shadow_bg.fill((10, 10, 20, 200))
-            self.screen.blit(shadow_bg, (0, 0))
+        # ✅ VẼ PANEL THẤT BẠI (nếu AI bị kẹt)
+        if self.phase == "failed":
+            # Lớp phủ tối
+            overlay = pygame.Surface((self.sw, self.sh), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 180))
+            self.screen.blit(overlay, (0, 0))
             
-            p_rect = ui["popup_panel"]
-            pygame.draw.rect(self.screen, (26, 34, 45), p_rect, border_radius=12)
-            pygame.draw.rect(self.screen, (46, 204, 113), p_rect, width=3, border_radius=12) 
+            # Khung panel
+            pw, ph = 400, 200
+            px = (self.sw - pw) // 2
+            py = (self.sh - ph) // 2
+            panel_rect = pygame.Rect(px, py, pw, ph)
             
+            pygame.draw.rect(self.screen, (40, 50, 60), panel_rect, border_radius=10)
+            pygame.draw.rect(self.screen, (231, 76, 60), panel_rect, width=3, border_radius=10)
+            
+            # Tiêu đề
             try: big_font = pygame.font.Font("assets/fonts/minecraft.ttf", 24)
             except: big_font = pygame.font.SysFont("Arial", 24, bold=True)
-                
-            title_text = big_font.render("THÀNH CÔNG RỒI!", True, (46, 204, 113))
-            self.screen.blit(title_text, title_text.get_rect(centerx=p_rect.centerx, y=p_rect.y + 30))
             
-            info_txt = f"AI đã đưa bảo bối về miệng túi sau {self.steps_count} bước!"
-            info_surface = self.font.render(info_txt, True, (220, 220, 220))
-            self.screen.blit(info_surface, info_surface.get_rect(centerx=p_rect.centerx, y=p_rect.y + 85))
+            title = big_font.render("THUẬT TOÁN BỊ KẸT!", True, (231, 76, 60))
+            self.screen.blit(title, title.get_rect(center=(px + pw//2, py + 40)))
             
-            self._draw_btn(ui["btn_popup_menu"], "MENU", (45, 55, 70))
-            self._draw_btn(ui["btn_popup_retry"], "REPLAY", (155, 89, 182))
-            self._draw_btn(ui["btn_popup_next"], "NEXT STAGE", (46, 204, 113))
+            msg = self.font.render("AI không tìm được đường đi tốt hơn.", True, (220, 220, 220))
+            self.screen.blit(msg, msg.get_rect(center=(px + pw//2, py + 85)))
+            
+            # Nút RETRY và BACK
+            retry_btn = pygame.Rect(px + 30, py + 130, 150, 40)
+            back_btn = pygame.Rect(px + 220, py + 130, 150, 40)
+            
+            self._draw_btn(retry_btn, "THỬ LẠI", (155, 89, 182))
+            self._draw_btn(back_btn, "QUAY LẠI", (231, 76, 60))
+            
+            # ✅ XỬ LÝ CLICK NÚT THẤT BẠI
+            # (Thêm vào handle_events TRƯỚC đoạn victory_panel)
+        
+        # VictoryPanel (vẽ cuối cùng)
+        self.victory_panel.update()
+        self.victory_panel.draw()

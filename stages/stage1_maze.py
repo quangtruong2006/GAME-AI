@@ -5,7 +5,7 @@ import json
 import os
 import time
 from collections import deque
-
+from ui.victory_panel import VictoryPanel
 from algorithms.uninformed.ids import ids  # fallback cho IDS
 
 
@@ -205,6 +205,7 @@ class Stage1Maze:
         # load map if exists
         if os.path.exists(self.map_file):
             self.load_map(self.map_file)
+        self.victory_panel = VictoryPanel(screen, stage_manager)
 
     # =========================
     # Helpers
@@ -477,13 +478,6 @@ class Stage1Maze:
         self.phase = "searching"
         self.msg = f"Searching ({self.selected_algorithm})..."
 
-        # unlock stage2 nếu có đường
-        if self.solution_path:
-            try:
-                self.stage_manager.unlock_stage("stage2")
-            except:
-                pass
-
     # =========================
     # Save / Load
     # =========================
@@ -608,7 +602,13 @@ class Stage1Maze:
         # sync slider rect every time (important for resize + draw-before-events safety)
         self.slider_mouse.rect = ui["slider_mouse"]
         self.slider_nobita.rect = ui["slider_nobita"]
+        # ✅ THÊM: Panel chặn events khi đang hiện
+        self.victory_panel.handle_events(events)
+        if self.victory_panel.visible:
+            return  # Đóng băng toàn bộ input của stage
 
+        ui = self._ui_rects()
+        map_rect = self._get_map_rect()
         for event in events:
             # sliders realtime
             if self.slider_mouse.handle_event(event):
@@ -854,6 +854,14 @@ class Stage1Maze:
                 self.phase = "done"
                 self.msg = "Done."
                 self.nobita_mode = "at_goal"
+
+                # ✅ THÊM: Hiện bảng thành công
+                self.victory_panel.show(
+                    next_stage_id     = "stage2",
+                    next_stage_unlock = "stage2",
+                    title    = "CHẶNG 1 HOÀN THÀNH!",
+                    subtitle = "Nobita đã tìm thấy Doraemon!"
+                )
                 return
 
     # =========================
@@ -1039,3 +1047,7 @@ class Stage1Maze:
         pygame.draw.rect(self.screen, (231, 76, 60), ui["back"], border_radius=6)
         back_text = self.font.render("BACK", True, (255, 255, 255))
         self.screen.blit(back_text, back_text.get_rect(center=ui["back"].center))
+
+        # ✅ THÊM: Vẽ victory panel đè lên tất cả (luôn ở cuối cùng)
+        self.victory_panel.update()
+        self.victory_panel.draw()

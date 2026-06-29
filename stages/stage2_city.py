@@ -6,7 +6,7 @@ import math
 import json
 import time
 from collections import deque
-
+from ui.victory_panel import VictoryPanel
 # --- IMPORT 3 THUẬT TOÁN ĐỒ THỊ CHUẨN ---
 from algorithms.informed.a_star import a_star
 from algorithms.informed.greedy import greedy_search
@@ -116,7 +116,7 @@ class Stage2City:
         
         self.phase = "idle"
         self.msg = "Ready."
-        self.show_completion_menu = False
+        self.victory_panel = VictoryPanel(screen, stage_manager)
         
         self.search_speed = 520.0
         self.nobita_speed = 280.0
@@ -234,7 +234,6 @@ class Stage2City:
         self.nobita_mode = "at_start"
         self.phase = "idle"
         self.msg = "Reset Path."
-        self.show_completion_menu = False
 
     def _get_shortest_path_unweighted(self, start, end):
         if start == end: return [start]
@@ -293,29 +292,16 @@ class Stage2City:
         self.msg = f"Searching ({self.selected_algorithm})..."
 
     def handle_events(self, events):
+        # ✅ THÊM: Panel chặn events khi hiện
+        self.victory_panel.handle_events(events)
+        if self.victory_panel.visible:
+            return  # Đóng băng input của stage
+        
         ui = self._ui_rects()
         self.slider_mouse.rect = ui["slider_mouse"]
         self.slider_nobita.rect = ui["slider_nobita"]
 
         for event in events:
-            if self.show_completion_menu:
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    cx, cy = self.sw // 2, self.sh // 2
-                    
-                    if pygame.Rect(cx - 100, cy - 20, 200, 40).collidepoint(event.pos):
-                        self.show_completion_menu = False # <--- TẮT BẢNG
-                        self.stage_manager.stages["stage_select"].trigger_unlock_animation("stage3")
-                        self.stage_manager.change_stage("stage_select")
-                        
-                    elif pygame.Rect(cx - 100, cy + 30, 200, 40).collidepoint(event.pos):
-                        self.show_completion_menu = False # <--- TẮT BẢNG
-                        self._reset_results()
-                        
-                    elif pygame.Rect(cx - 100, cy + 80, 200, 40).collidepoint(event.pos):
-                        self.show_completion_menu = False # <--- TẮT BẢNG
-                        self._reset_results() # Dọn sạch map cho lần sau vào lại
-                        self.stage_manager.change_stage("menu")
-                continue
             if self.slider_mouse.handle_event(event): self.search_speed = self.slider_mouse.value
             if self.slider_nobita.handle_event(event): self.nobita_speed = self.slider_nobita.value
 
@@ -449,8 +435,13 @@ class Stage2City:
             self.nobita_seg, self.nobita_t, done, finished_edge = step_route(self.solution_path, self.nobita_seg, self.nobita_t, self.nobita_speed)
             if done or (self.solution_path and self.nobita_seg >= len(self.solution_path) - 1):
                 self.phase = "completed"; self.msg = "Completed."; self.nobita_mode = "at_goal"
-                self.stage_manager.unlock_stage("stage3")
-                self.show_completion_menu = True
+                # ✅ THÊM: Hiện VictoryPanel
+                self.victory_panel.show(
+                    next_stage_id     = "stage3",
+                    next_stage_unlock = "stage3",
+                    title    = "CHẶNG 2 HOÀN THÀNH!",
+                    subtitle = "Tín hiệu đã được gửi đi!"
+                )
 
     def draw(self):
         ui = self._ui_rects()
@@ -562,25 +553,9 @@ class Stage2City:
         self.screen.blit(self.font.render(f"{self.msg}", True, (255, 215, 0)), (10, stats_y + 85))
 
         self._draw_btn_static(ui["back"], "BACK", (231, 76, 60))
-        if self.show_completion_menu:
-            # Lớp phủ mờ đen
-            overlay = pygame.Surface((self.sw, self.sh), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 180)) # Số 180 là độ mờ
-            self.screen.blit(overlay, (0, 0))
-            
-            # Khung chữ nhật ở giữa
-            cx, cy = self.sw // 2, self.sh // 2
-            pygame.draw.rect(self.screen, (40, 50, 60), (cx - 150, cy - 100, 300, 250), border_radius=10)
-            pygame.draw.rect(self.screen, (0, 255, 255), (cx - 150, cy - 100, 300, 250), width=2, border_radius=10)
-            
-            # Tiêu đề
-            title = self.title_font.render("STAGE CLEARED!", True, (255, 215, 0))
-            self.screen.blit(title, title.get_rect(center=(cx, cy - 60)))
-            
-            # Vẽ 3 nút bấm
-            self._draw_btn_static(pygame.Rect(cx - 100, cy - 20, 200, 40), "NEXT STAGE", (46, 204, 113))
-            self._draw_btn_static(pygame.Rect(cx - 100, cy + 30, 200, 40), "REPLAY", (52, 152, 219))
-            self._draw_btn_static(pygame.Rect(cx - 100, cy + 80, 200, 40), "MAIN MENU", (231, 76, 60))
+        # ✅ THÊM: Vẽ VictoryPanel ở cuối cùng
+        self.victory_panel.update()
+        self.victory_panel.draw()
 
     def _draw_btn_static(self, rect, text, color):
         pygame.draw.rect(self.screen, color, rect, border_radius=5)
