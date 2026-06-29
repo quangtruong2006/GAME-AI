@@ -877,12 +877,11 @@ class Stage1Maze:
         self.slider_mouse.rect = ui["slider_mouse"]
         self.slider_nobita.rect = ui["slider_nobita"]
 
-        # background
+        # background - chỉ vẽ trong vùng map (bên phải panel)
+        self.screen.fill(self.c_bg)  # fill toàn màn hình trước
         if self.bg_raw:
-            bg = pygame.transform.scale(self.bg_raw, (sw, sh))
-            self.screen.blit(bg, (0, 0))
-        else:
-            self.screen.fill(self.c_bg)
+            bg = pygame.transform.scale(self.bg_raw, (map_rect.w, map_rect.h))
+            self.screen.blit(bg, (map_rect.x, map_rect.y))
 
         # --- If editing: show graph (nodes+edges) to manipulate ---
         if self.map_edit_open:

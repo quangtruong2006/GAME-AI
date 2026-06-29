@@ -97,6 +97,9 @@ class Stage4Forest:
     QMARK_IMG_PATH  = "assets/images/question_mark.png"
     PORTAL_IMG_PATH = "assets/images/portal.png"
 
+    START_IMG_PATH = "assets/images/stage4_start.png"
+    GOAL_IMG_PATH  = "assets/images/stage4_goal.png"
+
     def __init__(self, screen, stage_manager):
         self.screen        = screen
         self.stage_manager = stage_manager
@@ -117,6 +120,12 @@ class Stage4Forest:
         self.star_raw   = self._load_img(self.STAR_IMG_PATH)
         self.qmark_raw  = self._load_img(self.QMARK_IMG_PATH)
         self.portal_raw = self._load_img(self.PORTAL_IMG_PATH)
+
+        self.start_img_raw = self._load_img(self.START_IMG_PATH)
+        self.goal_img_raw  = self._load_img(self.GOAL_IMG_PATH)
+
+        self._agent_facing_right = True
+        self._agent_prev_c       = -1
 
         self._img_cache: Dict[str, Tuple[pygame.Surface, tuple]] = {}
 
@@ -196,6 +205,12 @@ class Stage4Forest:
         self.toast_text  = None
         self.toast_until = 0
 
+        self._bob_tick   = 0
+        self._bob_offset = 0
+
+        self._rand_star_count   = 5
+        self._rand_belief_count = 5
+
     # ==================================================================
     #  Asset helpers
     # ==================================================================
@@ -221,6 +236,33 @@ class Stage4Forest:
             self._img_cache[key] = (
                 pygame.transform.smoothscale(raw, size), size)
         return self._img_cache[key][0]
+
+    # ==================================================================
+    #  Draw cell image helper
+    # ==================================================================
+
+    def _draw_cell_img(self, raw, x, y, ts,
+                       fallback_color, fallback_label,
+                       scale=1.5, offset_x=0, offset_y=0,
+                       flip_h=False):
+        size = max(4, int(ts * scale))
+        cx   = x + ts // 2 + offset_x
+        cy   = y + ts // 2 + offset_y
+
+        if raw is not None:
+            img = self._scaled(raw, (size, size))
+            if flip_h:
+                img = pygame.transform.flip(img, True, False)
+            rect = img.get_rect(center=(cx, cy))
+            self.screen.blit(img, rect)
+        else:
+            pygame.draw.circle(self.screen, (20, 20, 20),
+                               (cx, cy), max(4, ts // 2 - 1))
+            pygame.draw.circle(self.screen, fallback_color,
+                               (cx, cy), max(4, ts // 2 - 2), 3)
+            lbl = self.small_font.render(fallback_label, True, fallback_color)
+            self.screen.blit(lbl, (cx - lbl.get_width()  // 2,
+                                   cy - lbl.get_height() // 2))
 
     # ==================================================================
     #  Portal helpers
@@ -271,7 +313,7 @@ class Stage4Forest:
         return img
 
     # ==================================================================
-    #  Helpers
+    #  General helpers
     # ==================================================================
 
     def _all_blocked(self):
@@ -313,7 +355,7 @@ class Stage4Forest:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
     # ==================================================================
-    #  Load / Save map theo algo
+    #  Load / Save map
     # ==================================================================
 
     def _load_map_for_algo(self, algo: str):
@@ -348,17 +390,14 @@ class Stage4Forest:
             self.GOAL    = (int(g[0]), int(g[1]))
             self.blocked = {(int(r), int(c)) for r, c in data.get("blocked", [])}
 
-            # ✅ Fence chỉ AND-OR
             self.fences = (
                 {(int(r), int(c)) for r, c in data.get("fences", [])}
                 if algo == self.ALG_ANDOR else set()
             )
-            # ✅ Star chỉ BELIEF
             self.stars = (
                 {(int(r), int(c)) for r, c in data.get("stars", [])}
                 if algo == self.ALG_BELIEF else set()
             )
-            # ✅ Belief_goal chỉ BELIEF
             self.belief_goals = (
                 {(int(r), int(c)) for r, c in data.get("belief_goals", [])}
                 if algo == self.ALG_BELIEF else set()
@@ -392,7 +431,6 @@ class Stage4Forest:
     def _save_map_for_algo(self, algo: str):
         self._sanitize()
         path = MAP_INFO[algo]["path"]
-
         data_to_save = {
             "rows":    self.ROWS,
             "cols":    self.COLS,
@@ -400,17 +438,13 @@ class Stage4Forest:
             "goal":    list(self.GOAL),
             "blocked": sorted([[r, c] for r, c in self.blocked]),
             "points":  {k: list(v) for k, v in self.POINTS.items()},
-            # ✅ Fence chỉ AND-OR
             "fences": (sorted([[r, c] for r, c in self.fences])
                        if algo == self.ALG_ANDOR else []),
-            # ✅ Star chỉ BELIEF
             "stars": (sorted([[r, c] for r, c in self.stars])
                       if algo == self.ALG_BELIEF else []),
-            # ✅ Belief_goal chỉ BELIEF
             "belief_goals": (sorted([[r, c] for r, c in self.belief_goals])
                              if algo == self.ALG_BELIEF else []),
         }
-
         self._save_json(path, data_to_save)
         self._toast(f"Saved → {path}")
 
@@ -427,14 +461,14 @@ class Stage4Forest:
         self.moving_portal       = None
         self.fog_enabled         = False
         self.pending_place       = None
-
-        # ✅ Reset tool về block khi switch
-        self.edit_tool = "block"
+        self.edit_tool           = "block"
 
         self._load_map_for_algo(algo)
 
-        self.agent_r, self.agent_c = self.START
-        self.collected_stars       = set()
+        self.agent_r, self.agent_c   = self.START
+        self._agent_facing_right     = True
+        self._agent_prev_c           = self.START[1]
+        self.collected_stars         = set()
         self.planner.reset(start=self.START, goal=self.GOAL)
         self._init_explored()
 
@@ -504,11 +538,17 @@ class Stage4Forest:
     def _move(self, dr, dc):
         nr, nc = self.agent_r + dr, self.agent_c + dc
         if self._can_move_to(nr, nc):
+            if nc > self.agent_c:
+                self._agent_facing_right = True
+            elif nc < self.agent_c:
+                self._agent_facing_right = False
             self.agent_r, self.agent_c = nr, nc
             self._on_enter_cell(nr, nc)
 
     def _on_enter_cell(self, r, c):
         cell = (r, c)
+
+        # ── Thu thập ngôi sao ─────────────────────────────────────────
         if cell in self.stars and cell not in self.collected_stars:
             self.collected_stars.add(cell)
             if self.selected_algo == self.ALG_BELIEF and self.auto:
@@ -518,38 +558,164 @@ class Stage4Forest:
                     f"⭐ Star collected! "
                     f"({len(self.collected_stars)}/{len(self.stars)})"
                 )
+
+        # ── Belief logic ──────────────────────────────────────────────
         if self.selected_algo == self.ALG_BELIEF:
             self.belief_agent.notify_position(cell)
 
-    def _trigger_belief_detector(self, star_pos):
+            # Agent bước vào ô belief goal nhưng KHÔNG phải GOAL thật
+            # → tự động eliminate ô đó (đến rồi mà không thắng = sai)
+            if (self.auto
+                    and cell in self.belief_goals
+                    and cell != self.GOAL
+                    and not self.belief_agent.goal_confirmed):
+                self._auto_eliminate_belief(cell)
+
+    # ==================================================================
+    #  Belief eliminate helpers
+    # ==================================================================
+
+    def _auto_eliminate_belief(self, cell: Tuple[int, int]):
+        """
+        Tự động loại bỏ một belief goal khi agent bước vào ô đó
+        mà không phải GOAL thật (đến rồi không thắng = sai).
+
+        - Làm tối ô đó ngay lập tức.
+        - Nếu chỉ còn 1 belief active → confirm nó là GOAL,
+          làm tối toàn bộ ô còn lại.
+        """
+        if cell in self.belief_agent.eliminated:
+            return
+
+        # Eliminate ô này
+        self.belief_agent.eliminated.add(cell)
+        self.belief_agent.active_belief.discard(cell)
+        self.belief_path_surface = None
+
+        # Tính số belief còn lại (chưa bị eliminate)
+        remaining = (
+            self.belief_agent.active_belief
+            - self.belief_agent.eliminated
+        )
+
+        if len(remaining) == 1:
+            confirmed = next(iter(remaining))
+            self._confirm_belief_goal(
+                confirmed,
+                reason=f"đã loại hết trừ {confirmed}"
+            )
+        elif len(remaining) == 0:
+            self._toast(f"❌ Eliminated: {cell} | Không còn belief!")
+        else:
+            self._toast(
+                f"❌ Visited ≠ GOAL: {cell} | "
+                f"Còn {len(remaining)} beliefs"
+            )
+
+    def _confirm_belief_goal(self, confirmed: Tuple[int, int],
+                              reason: str = ""):
+        """
+        Xác nhận một ô là GOAL thật:
+        - Set confirmed_goal, goal_confirmed = True.
+        - Eliminate toàn bộ belief còn lại (không phải confirmed).
+        - Hiển thị popup + toast.
+        """
+        self.belief_agent.confirmed_goal = confirmed
+        self.belief_agent.goal_confirmed = True
+
+        # Làm tối tất cả ô belief KHÔNG phải confirmed
+        for bg in list(self.belief_goals):
+            if bg != confirmed:
+                self.belief_agent.eliminated.add(bg)
+                self.belief_agent.active_belief.discard(bg)
+
+        self.belief_path_surface = None
+
+        popup_msg = f"✓ GOAL xác nhận: {confirmed}!"
+        if reason:
+            popup_msg += f"| ({reason})"
+        self._show_detector_popup(popup_msg, ms=3500)
+        self._toast(f"✓ Goal confirmed: {confirmed}!", ms=3500)
+
+    def _trigger_belief_detector(self, star_pos: Tuple[int, int]):
+        """
+        Gọi detector từ BeliefSearchAgent khi thu thập sao.
+
+        Xử lý kết quả:
+          - result["confirmed"] → làm tối tất cả ô còn lại
+          - result["eliminated"] → làm tối ô bị loại,
+                                   kiểm tra remaining → tự confirm nếu còn 1
+        """
         result = self.belief_agent.trigger_detector(
             current_pos=(self.agent_r, self.agent_c)
         )
         if result is None:
             self._toast("⭐ Star collected! (no remaining beliefs)")
             return
-        msg = result["msg"]
-        self._show_detector_popup(msg, ms=3000)
-        self._toast(f"⭐ Detector: {msg}", ms=3000)
-        self.belief_path_surface = None
+
+        msg             = result.get("msg", "Detector kích hoạt!")
+        eliminated_cell = result.get("eliminated")   # tuple hoặc None
+        confirmed_cell  = result.get("confirmed")    # tuple hoặc None
+
+        if confirmed_cell is not None:
+            # ── Detector tìm ra goal → làm tối tất cả ô còn lại ──────
+            self._confirm_belief_goal(
+                confirmed_cell,
+                reason="detector xác nhận"
+            )
+            # Popup đã được set trong _confirm_belief_goal → return
+            return
+
+        if eliminated_cell is not None:
+            # ── Detector loại 1 ô → làm tối ô đó ────────────────────
+            if eliminated_cell not in self.belief_agent.eliminated:
+                self.belief_agent.eliminated.add(eliminated_cell)
+                self.belief_agent.active_belief.discard(eliminated_cell)
+                self.belief_path_surface = None
+
+                # Kiểm tra còn lại bao nhiêu belief
+                remaining = (
+                    self.belief_agent.active_belief
+                    - self.belief_agent.eliminated
+                )
+                if len(remaining) == 1:
+                    confirmed = next(iter(remaining))
+                    self._confirm_belief_goal(
+                        confirmed,
+                        reason="còn lại duy nhất sau detector"
+                    )
+                    return
+
+        # Hiển thị msg từ detector (nếu chưa confirm)
+        if not self.belief_agent.goal_confirmed:
+            self._show_detector_popup(msg, ms=3000)
+            self._toast(f"⭐ Detector: {msg}", ms=3000)
 
     # ==================================================================
-    #  AND-OR
+    #  AND-OR actions
     # ==================================================================
 
     def _exec_andor_action(self, a: str):
-        if   a == "U":     self._move(-1,  0)
-        elif a == "D":     self._move( 1,  0)
-        elif a == "L":     self._move( 0, -1)
-        elif a == "R":     self._move( 0,  1)
-        elif a == "C1->A": self.agent_r, self.agent_c = self.POINTS["A"]
-        elif a == "C1->B": self.agent_r, self.agent_c = self.POINTS["B"]
+        if   a == "U": self._move(-1,  0)
+        elif a == "D": self._move( 1,  0)
+        elif a == "L": self._move( 0, -1)
+        elif a == "R": self._move( 0,  1)
+        elif a == "C1->A":
+            dest = self.POINTS["A"]
+            self._agent_facing_right = dest[1] >= self.agent_c
+            self.agent_r, self.agent_c = dest
+        elif a == "C1->B":
+            dest = self.POINTS["B"]
+            self._agent_facing_right = dest[1] >= self.agent_c
+            self.agent_r, self.agent_c = dest
         elif a == "C2":
-            self.agent_r, self.agent_c = random.choice(
-                [self.POINTS["C"], self.POINTS["D"]])
+            dest = random.choice([self.POINTS["C"], self.POINTS["D"]])
+            self._agent_facing_right = dest[1] >= self.agent_c
+            self.agent_r, self.agent_c = dest
         elif a == "C3":
-            self.agent_r, self.agent_c = random.choice(
-                [self.POINTS["C"], self.POINTS["E"]])
+            dest = random.choice([self.POINTS["C"], self.POINTS["E"]])
+            self._agent_facing_right = dest[1] >= self.agent_c
+            self.agent_r, self.agent_c = dest
 
     # ==================================================================
     #  Belief path surface
@@ -627,32 +793,60 @@ class Stage4Forest:
             pygame.draw.polygon(surface, (255, 255, 255), pts, 1)
 
     def _draw_qmark_cells(self, board, ts, cells):
+        """
+        Vẽ ô belief goal với 3 trạng thái:
+          - eliminated  → làm tối (overlay đen + alpha thấp)
+          - confirmed   → tint xanh lá + viền C_CONFIRMED
+          - active      → bình thường
+        """
         if not cells: return
         qmark_size = int(ts * 1.7)
         offset     = (ts - qmark_size) // 2
         size       = (qmark_size, qmark_size)
+
         if self.qmark_raw:
             img = self._scaled(self.qmark_raw, size)
             for (r, c) in cells:
                 x   = board.x + c*ts + offset
                 y   = board.y + r*ts + offset
                 srf = img.copy()
+
                 if (r, c) in self.belief_agent.eliminated:
-                    tint = pygame.Surface(size, pygame.SRCALPHA)
-                    tint.fill((80, 80, 80, 160))
-                    srf.blit(tint, (0, 0)); srf.set_alpha(100)
+                    # ── Làm tối ô bị loại ────────────────────────────
+                    dark = pygame.Surface(size, pygame.SRCALPHA)
+                    dark.fill((0, 0, 0, 180))
+                    srf.blit(dark, (0, 0))
+                    srf.set_alpha(80)
+
                 elif (r, c) == self.belief_agent.confirmed_goal:
+                    # ── Ô confirmed: tô xanh sáng ────────────────────
                     tint = pygame.Surface(size, pygame.SRCALPHA)
                     tint.fill((80, 255, 120, 140))
                     srf.blit(tint, (0, 0))
+
                 self.screen.blit(srf, (x, y))
+
+                # Viền xanh cho confirmed
+                if (r, c) == self.belief_agent.confirmed_goal:
+                    pygame.draw.rect(
+                        self.screen, C_CONFIRMED,
+                        (board.x + c*ts + 1,
+                         board.y + r*ts + 1,
+                         ts - 2, ts - 2),
+                        3, border_radius=3
+                    )
+
         else:
+            # Fallback: vòng tròn màu
             for (r, c) in cells:
                 x, y   = board.x + c*ts, board.y + r*ts
                 cx, cy = x + ts//2, y + ts//2
-                if   (r, c) in self.belief_agent.eliminated:   col = C_ELIMINATED
-                elif (r, c) == self.belief_agent.confirmed_goal: col = C_CONFIRMED
-                else: col = C_BELIEF_GOAL
+                if   (r, c) in self.belief_agent.eliminated:
+                    col = C_ELIMINATED
+                elif (r, c) == self.belief_agent.confirmed_goal:
+                    col = C_CONFIRMED
+                else:
+                    col = C_BELIEF_GOAL
                 pygame.draw.circle(self.screen, col, (cx, cy),
                                    max(4, int(ts*0.70)))
                 lbl = self.title_font.render("?", True, (255, 255, 255))
@@ -660,13 +854,12 @@ class Stage4Forest:
                                        cy - lbl.get_height()//2))
 
     # ==================================================================
-    #  Draw portals (chỉ AND-OR)
+    #  Draw portals (AND-OR only)
     # ==================================================================
 
     def _draw_all_portals(self, board, ts):
         if self.selected_algo != self.ALG_ANDOR:
             return
-
         now      = pygame.time.get_ticks()
         pulse    = 0.5 + 0.5 * math.sin(now / 300)
         show_all = self.edit_mode or not self.fog_enabled
@@ -747,13 +940,16 @@ class Stage4Forest:
     def _draw_detector_popup(self):
         now = pygame.time.get_ticks()
         if not self.detector_popup_text or now > self.detector_popup_until:
-            self.detector_popup_text = None; return
+            self.detector_popup_text = None
+            return
         sw, sh = self.screen.get_size()
         lines  = self.detector_popup_text.split("|")
-        line_h = 36; pad = 20
+        line_h = 36
+        pad    = 20
         max_w  = max(self.font.size(l.strip())[0] for l in lines) + pad*2
         box_h  = line_h*len(lines) + pad*2
-        box_x  = (sw - max_w)//2; box_y = sh//2 - box_h//2
+        box_x  = (sw - max_w)//2
+        box_y  = sh//2 - box_h//2
         bg     = pygame.Surface((max_w, box_h), pygame.SRCALPHA)
         bg.fill((20, 20, 30, 210))
         self.screen.blit(bg, (box_x, box_y))
@@ -790,6 +986,7 @@ class Stage4Forest:
         self.belief_path_surface = None
         self.belief_agent.reset()
         self.agent_r, self.agent_c = self.START
+        self._agent_facing_right   = True
         self.collected_stars       = set()
         self._portal_tinted_cache.clear()
         self.planner.reset(start=self.START, goal=self.GOAL)
@@ -854,11 +1051,98 @@ class Stage4Forest:
             else:                         self.belief_goals.add(cell)
 
     # ==================================================================
+    #  Random generation (BELIEF only)
+    # ==================================================================
+
+    def _get_valid_random_cells(self, count: int,
+                                 exclude: set = None) -> list:
+        protected = (
+            {self.START, self.GOAL}
+            | set(self.POINTS.values())
+            | self._all_blocked()
+            | (exclude or set())
+        )
+        candidates = [
+            (r, c)
+            for r in range(self.ROWS)
+            for c in range(self.COLS)
+            if (r, c) not in protected
+        ]
+        if len(candidates) < count:
+            self._toast(
+                f"Chỉ còn {len(candidates)} ô trống! "
+                f"Giảm số lượng xuống.", ms=2500)
+            count = len(candidates)
+        return random.sample(candidates, count) if candidates else []
+
+    def _random_gen_stars(self):
+        self.stars.clear()
+        cells      = self._get_valid_random_cells(
+            self._rand_star_count, exclude=self.belief_goals)
+        self.stars = set(cells)
+        self._sanitize()
+        self._toast(f"⭐ Đặt ngẫu nhiên {len(self.stars)} ngôi sao!")
+
+    def _random_gen_beliefs(self):
+        self.belief_goals.clear()
+        cells = self._get_valid_random_cells(
+            self._rand_belief_count,
+            exclude=self.stars | {self.GOAL})
+        self.belief_goals = set(cells) | {self.GOAL}
+        self._sanitize()
+        self._toast(
+            f"❓ Đặt ngẫu nhiên {len(self.belief_goals)} "
+            f"belief goals (gồm GOAL thật)!")
+
+    def _random_gen_all(self):
+        self.stars.clear()
+        self.belief_goals.clear()
+        protected = (
+            {self.START, self.GOAL}
+            | set(self.POINTS.values())
+            | self._all_blocked()
+        )
+        candidates = [
+            (r, c)
+            for r in range(self.ROWS)
+            for c in range(self.COLS)
+            if (r, c) not in protected
+        ]
+        total_need = self._rand_star_count + self._rand_belief_count
+        if len(candidates) < total_need:
+            self._toast(
+                f"Không đủ ô! Cần {total_need}, "
+                f"có {len(candidates)}. Tự điều chỉnh.", ms=2500)
+            ratio      = len(candidates) / total_need
+            star_cnt   = max(1, int(self._rand_star_count   * ratio))
+            belief_cnt = max(1, int(self._rand_belief_count * ratio))
+        else:
+            star_cnt   = self._rand_star_count
+            belief_cnt = self._rand_belief_count
+
+        shuffled = candidates.copy()
+        random.shuffle(shuffled)
+        self.stars        = set(shuffled[:star_cnt])
+        self.belief_goals = (set(shuffled[star_cnt:star_cnt+belief_cnt])
+                             | {self.GOAL})
+        self._sanitize()
+        self._toast(
+            f"🎲 Random: {len(self.stars)} ⭐ + "
+            f"{len(self.belief_goals)} ❓ (gồm GOAL)")
+
+    def _clear_belief_and_stars(self):
+        self.stars.clear()
+        self.belief_goals.clear()
+        self._toast("🗑 Đã xóa tất cả Stars và Beliefs!")
+
+    # ==================================================================
     #  UI helpers
     # ==================================================================
 
     def _button(self, name, x, y, w, h):
-        r = pygame.Rect(x, y, w, h); self.ui_buttons[name] = r; return r
+        r = pygame.Rect(x, y, w, h)
+        self.ui_buttons[name] = r
+        return r
 
     def _draw_button(self, rect, label, active=False, disabled=False,
                      color=None, text_color=None):
@@ -866,10 +1150,12 @@ class Stage4Forest:
             bg, fg, border = (70, 70, 70), (150, 150, 150), (90, 90, 90)
         else:
             bg, fg, border = (45, 55, 65), (240, 240, 240), (120, 130, 140)
-        if color and not disabled:   bg = color; border = (255, 255, 255)
+        if color and not disabled:
+            bg = color; border = (255, 255, 255)
         if active and not disabled and color is None:
             bg = (45, 110, 190); border = (150, 200, 255)
-        if text_color: fg = text_color
+        if text_color:
+            fg = text_color
         pygame.draw.rect(self.screen, bg,     rect, border_radius=7)
         pygame.draw.rect(self.screen, border, rect, 2, border_radius=7)
         txt = self.font.render(label, True, fg)
@@ -922,9 +1208,10 @@ class Stage4Forest:
         bh   = 38
         g    = 8
 
-        # ── Title ─────────────────────────────────────────────────────
+        # Title + subtitle + desc
         self.screen.blit(
-            self.title_font.render(info["title"], True, (240, 240, 240)), (x, y))
+            self.title_font.render(info["title"], True, (240, 240, 240)),
+            (x, y))
         y += 32
         self.screen.blit(
             self.small_font.render(info["subtitle"], True,
@@ -936,7 +1223,7 @@ class Stage4Forest:
             y += 18
         y += 4
 
-        # ── Algorithm tabs ────────────────────────────────────────────
+        # Algorithm tabs
         y = self._sep(y, "ALGORITHM")
         tab_w = (w - 2*g) // 3
         tx    = x
@@ -949,30 +1236,35 @@ class Stage4Forest:
             self._draw_button(r, label,
                               active=(self.selected_algo == key),
                               disabled=self.edit_mode,
-                              color=col if self.selected_algo == key else None)
+                              color=col if self.selected_algo == key
+                                    else None)
             tx += tab_w + g
         y += bh + g
 
-        # ── Control ───────────────────────────────────────────────────
+        # Control
         y = self._sep(y, "CONTROL")
         r = self._button("run_ai", x, y, w, bh)
         self._draw_button(r, "▶  RUN AI", disabled=self.edit_mode,
-                          color=(35, 155, 85) if not self.edit_mode else None)
+                          color=(35, 155, 85) if not self.edit_mode
+                                else None)
         y += bh + g
         hw = (w - g) // 2
         r  = self._button("cancel_ai", x, y, hw, bh)
         self._draw_button(r, "■  CANCEL", disabled=self.edit_mode,
-                          color=(190, 60, 60) if not self.edit_mode else None)
+                          color=(190, 60, 60) if not self.edit_mode
+                                else None)
         r2 = self._button("reset", x+hw+g, y, hw, bh)
         self._draw_button(r2, "↺  RESET", disabled=self.edit_mode,
-                          color=(110, 60, 160) if not self.edit_mode else None)
+                          color=(110, 60, 160) if not self.edit_mode
+                                else None)
         y += bh + g
 
-        # ── Speed ─────────────────────────────────────────────────────
+        # Speed slider
         y = self._sep(y, "SPEED")
-        y = self._draw_slider(x, y, w, "ms/step", self.nobita_speed, 60, 800)
+        y = self._draw_slider(x, y, w, "ms/step",
+                               self.nobita_speed, 60, 800)
 
-        # ── Map editor ────────────────────────────────────────────────
+        # Map editor toggle
         y = self._sep(y, "MAP EDITOR")
         r = self._button("edit_toggle", x, y, w, bh)
         if not self.edit_mode:
@@ -986,7 +1278,6 @@ class Stage4Forest:
         if self.edit_mode:
             y = self._sep(y, "TOOLS")
 
-            # ONLINE: chỉ block | erase
             if self.selected_algo == self.ALG_ONLINE:
                 tw1 = (w - g) // 2
                 tx  = x
@@ -996,11 +1287,11 @@ class Stage4Forest:
                 ]:
                     tr = self._button(f"tool_{key}", tx, y, tw1, bh)
                     self._draw_button(tr, lbl,
-                                      active=(self.edit_tool == key), color=col)
+                                      active=(self.edit_tool == key),
+                                      color=col)
                     tx += tw1 + g
                 y += bh + g
 
-            # AND-OR: block | fence | erase
             elif self.selected_algo == self.ALG_ANDOR:
                 tw1 = (w - 2*g) // 3
                 tx  = x
@@ -1011,11 +1302,11 @@ class Stage4Forest:
                 ]:
                     tr = self._button(f"tool_{key}", tx, y, tw1, bh)
                     self._draw_button(tr, lbl,
-                                      active=(self.edit_tool == key), color=col)
+                                      active=(self.edit_tool == key),
+                                      color=col)
                     tx += tw1 + g
                 y += bh + g
 
-            # BELIEF: block | erase, rồi star | belief_goal
             elif self.selected_algo == self.ALG_BELIEF:
                 tw1 = (w - g) // 2
                 tx  = x
@@ -1025,7 +1316,8 @@ class Stage4Forest:
                 ]:
                     tr = self._button(f"tool_{key}", tx, y, tw1, bh)
                     self._draw_button(tr, lbl,
-                                      active=(self.edit_tool == key), color=col)
+                                      active=(self.edit_tool == key),
+                                      color=col)
                     tx += tw1 + g
                 y += bh + g
 
@@ -1037,8 +1329,64 @@ class Stage4Forest:
                 ]:
                     tr = self._button(f"tool_{key}", tx, y, tw2, bh)
                     self._draw_button(tr, lbl,
-                                      active=(self.edit_tool == key), color=col)
+                                      active=(self.edit_tool == key),
+                                      color=col)
                     tx += tw2 + g
+                y += bh + g
+
+                # Random Generate section
+                y = self._sep(y, "RANDOM GENERATE")
+
+                self.screen.blit(
+                    self.small_font.render(
+                        f"Stars: {self._rand_star_count}",
+                        True, C_STAR), (x, y))
+                y += 20
+                hw3  = (w - 2*g) // 3
+                rm_s = self._button("rand_star_dec", x, y, hw3, 30)
+                self._draw_button(rm_s, "  -", color=(120, 80, 20))
+                num_s = self.font.render(
+                    str(self._rand_star_count), True, (255, 220, 100))
+                self.screen.blit(num_s, (
+                    x + hw3 + g + (hw3 - num_s.get_width()) // 2,
+                    y + (30 - num_s.get_height()) // 2))
+                rp_s = self._button("rand_star_inc",
+                                    x + 2*(hw3+g), y, hw3, 30)
+                self._draw_button(rp_s, "  +", color=(120, 80, 20))
+                y += 38
+
+                self.screen.blit(
+                    self.small_font.render(
+                        f"Beliefs: {self._rand_belief_count}",
+                        True, C_BELIEF_GOAL), (x, y))
+                y += 20
+                rm_b = self._button("rand_belief_dec", x, y, hw3, 30)
+                self._draw_button(rm_b, "  -", color=(100, 30, 100))
+                num_b = self.font.render(
+                    str(self._rand_belief_count), True, (220, 100, 220))
+                self.screen.blit(num_b, (
+                    x + hw3 + g + (hw3 - num_b.get_width()) // 2,
+                    y + (30 - num_b.get_height()) // 2))
+                rp_b = self._button("rand_belief_inc",
+                                    x + 2*(hw3+g), y, hw3, 30)
+                self._draw_button(rp_b, "  +", color=(100, 30, 100))
+                y += 38
+
+                r_gen_s = self._button("rand_gen_stars", x, y, w, bh)
+                self._draw_button(r_gen_s, "🎲 Random Stars",
+                                  color=(150, 110, 20))
+                y += bh + g
+                r_gen_b = self._button("rand_gen_beliefs", x, y, w, bh)
+                self._draw_button(r_gen_b, "🎲 Random Beliefs",
+                                  color=(120, 40, 140))
+                y += bh + g
+                r_gen_all = self._button("rand_gen_all", x, y, w, bh)
+                self._draw_button(r_gen_all, "🎲 Random ALL",
+                                  color=(160, 60, 60))
+                y += bh + g
+                r_clear = self._button("rand_clear", x, y, w, bh)
+                self._draw_button(r_clear, "🗑  Clear All",
+                                  color=(80, 80, 80))
                 y += bh + g
 
             # Set START / GOAL
@@ -1053,7 +1401,7 @@ class Stage4Forest:
                               color=(200, 160, 0))
             y += bh + g + 2
 
-            # Move portals: chỉ AND-OR
+            # Move portals (AND-OR only)
             if self.selected_algo == self.ALG_ANDOR:
                 y = self._sep(y, "MOVE PORTALS")
                 tw3 = (w - 2*g) // 3
@@ -1096,8 +1444,8 @@ class Stage4Forest:
                         "Click map      → đặt vị trí",
                     ]:
                         self.screen.blit(
-                            self.small_font.render(line, True, (160, 160, 160)),
-                            (x, y))
+                            self.small_font.render(
+                                line, True, (160, 160, 160)), (x, y))
                         y += 20
 
             # Stats
@@ -1124,11 +1472,12 @@ class Stage4Forest:
                     ("Đảm bảo đích cổng về GOAL", (255, 200, 100)),
                     ("C1→A,B  C2→C,D  C3→C,E", (180, 180, 180)),
                 ]
-            else:  # BELIEF
+            else:
                 stats = [
                     (f"Tool: {self.edit_tool.upper()}",
                      tool_colors.get(self.edit_tool, (200, 200, 200))),
-                    (f"Belief goals (?): {len(self.belief_goals)}", C_BELIEF_GOAL),
+                    (f"Belief goals (?): {len(self.belief_goals)}",
+                     C_BELIEF_GOAL),
                     (f"Stars (detector): {len(self.stars)}", C_STAR),
                     ("GOAL phải nằm trong ô ?", (255, 200, 100)),
                 ]
@@ -1149,14 +1498,17 @@ class Stage4Forest:
                 y += 20
 
             if self.selected_algo == self.ALG_BELIEF:
-                act_b   = len(self.belief_agent.active_belief)
+                act_b   = len(self.belief_agent.active_belief
+                              - self.belief_agent.eliminated)
                 elim_b  = len(self.belief_agent.eliminated)
                 total_b = len(self.belief_agent.belief_goals)
                 for line, col in [
                     (f"Belief pool: {total_b}", C_BELIEF_GOAL),
-                    (f"Active: {act_b}  Eliminated: {elim_b}", (200, 200, 200)),
+                    (f"Active: {act_b}  Eliminated: {elim_b}",
+                     (200, 200, 200)),
                     (self.belief_agent.progress, (200, 200, 200)),
-                    (f"Stars: {len(self.collected_stars)}/{len(self.stars)}", C_STAR),
+                    (f"Stars: {len(self.collected_stars)}"
+                     f"/{len(self.stars)}", C_STAR),
                 ]:
                     self.screen.blit(
                         self.small_font.render(line, True, col), (x, y))
@@ -1179,10 +1531,11 @@ class Stage4Forest:
                             True, col), (x, y))
                     y += 18
 
-            else:  # ONLINE
+            else:
                 self.screen.blit(
                     self.small_font.render(
-                        "Fog bật khi RUN AI", True, (170, 170, 170)), (x, y))
+                        "Fog bật khi RUN AI",
+                        True, (170, 170, 170)), (x, y))
                 y += 20
 
         # Toast
@@ -1190,7 +1543,8 @@ class Stage4Forest:
         if self.toast_text:
             if now <= self.toast_until:
                 self.screen.blit(
-                    self.font.render(self.toast_text, True, (255, 255, 160)),
+                    self.font.render(
+                        self.toast_text, True, (255, 255, 160)),
                     (x, sh-36))
             else:
                 self.toast_text = None
@@ -1202,7 +1556,8 @@ class Stage4Forest:
     def _set_speed_from_mouse(self, mx):
         if not self.slider_rect: return
         vmin, vmax = 60, 800
-        x0 = self.slider_rect.x; x1 = x0 + self.slider_rect.w
+        x0 = self.slider_rect.x
+        x1 = x0 + self.slider_rect.w
         mx = max(x0, min(x1, mx))
         self.nobita_speed  = int(vmin + (mx-x0)/(x1-x0)*(vmax-vmin))
         self.auto_delay_ms = self.nobita_speed
@@ -1218,7 +1573,8 @@ class Stage4Forest:
 
         if self.slider_rect and self.slider_rect.collidepoint(mx, my):
             self.dragging_slider = True
-            self._set_speed_from_mouse(mx); return True
+            self._set_speed_from_mouse(mx)
+            return True
 
         for name, rect in self.ui_buttons.items():
             if not rect.collidepoint(mx, my): continue
@@ -1227,28 +1583,27 @@ class Stage4Forest:
                 self._switch_algo(name[4:])
                 self._toast(f"Map: {MAP_INFO[name[4:]]['title']}")
                 return True
-
             if name == "run_ai" and not self.edit_mode:
                 self._run_ai(); return True
-
             if name == "cancel_ai" and not self.edit_mode:
-                self.auto = False; self.belief_path_surface = None
-                self.belief_agent.reset(); self.fog_enabled = False
-                self._toast("Canceled."); return True
-
+                self.auto = False
+                self.belief_path_surface = None
+                self.belief_agent.reset()
+                self.fog_enabled = False
+                self._toast("Canceled.")
+                return True
             if name == "reset" and not self.edit_mode:
                 self._reset_agent(); self._toast("Reset."); return True
-
             if name == "edit_toggle":
                 if not self.edit_mode: self._enter_edit()
                 else:                  self._save_and_exit_edit()
                 return True
-
             if name.startswith("tool_") and self.edit_mode:
-                self.edit_tool = name[5:]; self.pending_place = None
+                self.edit_tool     = name[5:]
+                self.pending_place = None
                 self.moving_portal = None
-                self._toast(f"Tool: {self.edit_tool.upper()}"); return True
-
+                self._toast(f"Tool: {self.edit_tool.upper()}")
+                return True
             if name == "place_start" and self.edit_mode:
                 self.moving_portal = None
                 self.pending_place = (None if self.pending_place == "START"
@@ -1256,7 +1611,6 @@ class Stage4Forest:
                 self._toast("Click map → set START"
                             if self.pending_place else "Cancelled.")
                 return True
-
             if name == "place_goal" and self.edit_mode:
                 self.moving_portal = None
                 self.pending_place = (None if self.pending_place == "GOAL"
@@ -1264,19 +1618,49 @@ class Stage4Forest:
                 self._toast("Click map → set GOAL"
                             if self.pending_place else "Cancelled.")
                 return True
-
             if name.startswith("move_") and self.edit_mode:
                 key = name[5:]
                 if self.moving_portal == key:
-                    self.moving_portal = None; self._toast("Cancelled.")
+                    self.moving_portal = None
+                    self._toast("Cancelled.")
                 else:
-                    self.moving_portal = key; self.pending_place = None
+                    self.moving_portal = key
+                    self.pending_place = None
                     self._toast(f"Click map to place {key}")
                 return True
-
             if name == "cancel_move_portal" and self.edit_mode:
                 self.moving_portal = None
-                self._toast("Move cancelled."); return True
+                self._toast("Move cancelled.")
+                return True
+
+            # Random controls
+            if name == "rand_star_dec" and self.edit_mode:
+                self._rand_star_count = max(1, self._rand_star_count - 1)
+                return True
+            if name == "rand_star_inc" and self.edit_mode:
+                self._rand_star_count = min(50, self._rand_star_count + 1)
+                return True
+            if name == "rand_belief_dec" and self.edit_mode:
+                self._rand_belief_count = max(1, self._rand_belief_count - 1)
+                return True
+            if name == "rand_belief_inc" and self.edit_mode:
+                self._rand_belief_count = min(50, self._rand_belief_count + 1)
+                return True
+            if name == "rand_gen_stars" and self.edit_mode:
+                if self.selected_algo == self.ALG_BELIEF:
+                    self._random_gen_stars()
+                return True
+            if name == "rand_gen_beliefs" and self.edit_mode:
+                if self.selected_algo == self.ALG_BELIEF:
+                    self._random_gen_beliefs()
+                return True
+            if name == "rand_gen_all" and self.edit_mode:
+                if self.selected_algo == self.ALG_BELIEF:
+                    self._random_gen_all()
+                return True
+            if name == "rand_clear" and self.edit_mode:
+                self._clear_belief_and_stars()
+                return True
 
         return False
 
@@ -1308,7 +1692,8 @@ class Stage4Forest:
             else:
                 self.andor_policy = policy
                 self.auto         = True
-                self._toast(f"AND-OR: Policy OK ({solver.expansions} nodes)")
+                self._toast(
+                    f"AND-OR: Policy OK ({solver.expansions} nodes)")
 
         elif self.selected_algo == self.ALG_BELIEF:
             self.fog_enabled = False
@@ -1341,6 +1726,8 @@ class Stage4Forest:
         self.moving_portal       = None
         self.belief_agent.reset()
         self.agent_r, self.agent_c = self.START
+        self._agent_facing_right   = True
+        self._bob_offset           = 0
         self.collected_stars       = set()
         self.fog_enabled           = False
         self.planner.reset(start=self.START, goal=self.GOAL)
@@ -1368,11 +1755,9 @@ class Stage4Forest:
                         cell = self._px_to_cell(*e.pos)
                         if cell is None: continue
                         r, c = cell
-
                         if self.moving_portal is not None:
                             self._move_portal_to(self.moving_portal, cell)
                             self.moving_portal = None; continue
-
                         if self.pending_place == "START":
                             self._set_start(cell)
                             self.pending_place = None
@@ -1418,11 +1803,19 @@ class Stage4Forest:
         self.planner.observe(self._sense())
         self._portal_anim_tick = pygame.time.get_ticks()
 
+        # Bob animation
+        if self.auto and not self.edit_mode:
+            now = pygame.time.get_ticks()
+            self._bob_offset = int(math.sin(now / 130) * 3)
+        else:
+            self._bob_offset = 0
+
         now = pygame.time.get_ticks()
         if self.edit_mode or not self.auto: return
         if now - self._last_auto_tick < self.auto_delay_ms: return
         self._last_auto_tick = now
 
+        # ── ONLINE ────────────────────────────────────────────────────
         if self.selected_algo == self.ALG_ONLINE:
             self.planner.set_goal(self.GOAL)
             dr, dc = self.planner.next_action((self.agent_r, self.agent_c))
@@ -1431,36 +1824,51 @@ class Stage4Forest:
                 if self.fog_enabled: self._reveal()
             self.planner.set_position((self.agent_r, self.agent_c))
             if (self.agent_r, self.agent_c) == self.GOAL:
-                self.auto = False; self.fog_enabled = False
+                self.auto        = False
+                self.fog_enabled = False
+                self._bob_offset = 0
                 self._toast("🎉 Thoát khỏi rừng sương mù!")
 
+        # ── AND-OR ────────────────────────────────────────────────────
         elif self.selected_algo == self.ALG_ANDOR:
-            if not self.andor_policy: self.auto = False; return
+            if not self.andor_policy:
+                self.auto = False; return
             s = (self.agent_r, self.agent_c)
             a = self.andor_policy.get(s)
             if a is None:
-                self.auto = False
+                self.auto        = False
+                self._bob_offset = 0
                 self._toast("AND-OR: hết action."); return
             self._exec_andor_action(a)
             if (self.agent_r, self.agent_c) == self.GOAL:
-                self.auto = False
+                self.auto        = False
+                self._bob_offset = 0
                 self._toast("🎉 Vượt qua rừng cổng ma thuật!")
 
+        # ── BELIEF ────────────────────────────────────────────────────
         elif self.selected_algo == self.ALG_BELIEF:
             if self.belief_agent.solved:
-                self.auto = False
+                self.auto        = False
+                self._bob_offset = 0
                 self._toast("🎉 Tìm ra căn lều đúng!"); return
-            if self.belief_agent.failed or not self.belief_agent.has_next():
-                self.auto = False
+            if (self.belief_agent.failed
+                    or not self.belief_agent.has_next()):
+                self.auto        = False
+                self._bob_offset = 0
                 self._toast("BELIEF: hết bước."); return
             a = self.belief_agent.next_action()
             if a:
-                dr, dc = {"U": (-1,0), "D": (1,0),
-                          "L": (0,-1), "R": (0,1)}[a]
+                dr, dc = {"U": (-1, 0), "D": (1,  0),
+                          "L": (0, -1), "R": (0,  1)}[a]
                 self._move(dr, dc)
             if self.belief_agent.solved:
-                self.auto = False
+                self.auto        = False
+                self._bob_offset = 0
                 self._toast("🎉 Tìm ra căn lều đúng!")
+
+    # ==================================================================
+    #  Draw
+    # ==================================================================
 
     def draw(self):
         board, ts = self._board_rect()
@@ -1472,7 +1880,7 @@ class Stage4Forest:
         if bg_raw:
             size = (board.w, board.h)
             if self._bg_scaled_size.get(algo) != size:
-                self._bg_scaled[algo]      = pygame.transform.smoothscale(
+                self._bg_scaled[algo] = pygame.transform.smoothscale(
                     bg_raw, size)
                 self._bg_scaled_size[algo] = size
             self.screen.blit(self._bg_scaled[algo], board.topleft)
@@ -1481,92 +1889,122 @@ class Stage4Forest:
 
         show_all = self.edit_mode or not self.fog_enabled
 
-        # Blocked
-        vis_blocked = self.blocked if show_all else self.blocked & self.explored
+        # Blocked cells
+        vis_blocked = (self.blocked if show_all
+                       else self.blocked & self.explored)
         self._draw_water_cells(board, ts, vis_blocked, alpha=110)
 
-        # Fence chỉ AND-OR
+        # Fence cells (AND-OR only)
         if algo == self.ALG_ANDOR:
-            vis_fences = self.fences if show_all else self.fences & self.explored
+            vis_fences = (self.fences if show_all
+                          else self.fences & self.explored)
             self._draw_water_cells(board, ts, vis_fences, alpha=210)
 
-        # Portals chỉ AND-OR
+        # Portals
         self._draw_all_portals(board, ts)
 
-        # Belief path
+        # Belief path trail
         if algo == self.ALG_BELIEF and self.belief_agent.pos_sequence:
             self._rebuild_belief_path_surface(board, ts)
             if self.belief_path_surface:
                 self.screen.blit(self.belief_path_surface, board.topleft)
 
-        # Belief goals chỉ BELIEF
+        # Belief goal cells (? marks)
         if algo == self.ALG_BELIEF:
             if not self.edit_mode:
                 self._draw_qmark_cells(board, ts, self.belief_goals)
-                goal_confirmed = (self.belief_agent.goal_confirmed and
-                                  self.belief_agent.confirmed_goal == self.GOAL)
+                goal_confirmed = (
+                    self.belief_agent.goal_confirmed
+                    and self.belief_agent.confirmed_goal == self.GOAL
+                )
                 if not goal_confirmed and self.auto:
                     self._draw_qmark_cells(board, ts, {self.GOAL})
             else:
                 self._draw_qmark_cells(board, ts, self.belief_goals)
 
-        # Stars chỉ BELIEF
+        # Star cells
         if algo == self.ALG_BELIEF:
-            vis_stars = self.stars if show_all else self.stars & self.explored
+            vis_stars = (self.stars if show_all
+                         else self.stars & self.explored)
             self._draw_star_cells(board, ts, vis_stars)
 
-        # START
-        sx, sy, _ = self._cell_to_px(*self.START)
-        pygame.draw.rect(self.screen, C_START,
-                         (sx+3, sy+3, ts-6, ts-6), 3, border_radius=3)
-        lbl = self.small_font.render("S", True, C_START)
-        self.screen.blit(lbl, (sx+ts//2-lbl.get_width()//2,
-                               sy+ts//2-lbl.get_height()//2))
-
-        # GOAL
+        # ── GOAL image ────────────────────────────────────────────────
         if algo == self.ALG_BELIEF and not self.edit_mode:
-            goal_confirmed = (self.belief_agent.goal_confirmed and
-                              self.belief_agent.confirmed_goal == self.GOAL)
+            goal_confirmed = (
+                self.belief_agent.goal_confirmed
+                and self.belief_agent.confirmed_goal == self.GOAL
+            )
             show_goal = (not self.auto) or goal_confirmed
         else:
             show_goal = True
 
         if show_goal:
             gx, gy, _ = self._cell_to_px(*self.GOAL)
-            pygame.draw.rect(self.screen, C_GOAL_MARK,
-                             (gx+2, gy+2, ts-4, ts-4), 3, border_radius=3)
-            lbl = self.small_font.render("G", True, C_GOAL_MARK)
-            self.screen.blit(lbl, (gx+ts//2-lbl.get_width()//2,
-                                   gy+ts//2-lbl.get_height()//2))
+            if self.goal_img_raw:
+                size = max(4, int(ts * 1.6))
+                img  = self._scaled(self.goal_img_raw, (size, size))
+                rect = img.get_rect(
+                    center=(gx + ts//2, gy + ts//2 - ts//4))
+                self.screen.blit(img, rect)
+            else:
+                pygame.draw.rect(self.screen, C_GOAL_MARK,
+                                 (gx+2, gy+2, ts-4, ts-4), 3,
+                                 border_radius=3)
+                lbl = self.small_font.render("G", True, C_GOAL_MARK)
+                self.screen.blit(lbl, (
+                    gx+ts//2-lbl.get_width()//2,
+                    gy+ts//2-lbl.get_height()//2))
 
-        # Confirmed goal
+        # ── Confirmed goal highlight (BELIEF) ─────────────────────────
         if (algo == self.ALG_BELIEF
                 and self.belief_agent.goal_confirmed
                 and not self.edit_mode):
             gr, gc    = self.belief_agent.confirmed_goal
             gx, gy, _ = self._cell_to_px(gr, gc)
             pygame.draw.rect(self.screen, C_CONFIRMED,
-                             (gx+1, gy+1, ts-2, ts-2), 4, border_radius=3)
-            lbl = self.small_font.render("G!", True, C_CONFIRMED)
-            self.screen.blit(lbl, (gx+ts//2-lbl.get_width()//2,
-                                   gy+ts//2-lbl.get_height()//2))
+                             (gx+1, gy+1, ts-2, ts-2), 4,
+                             border_radius=3)
+            if self.goal_img_raw:
+                size = max(4, int(ts * 1.6))
+                img  = self._scaled(self.goal_img_raw, (size, size))
+                rect = img.get_rect(
+                    center=(gx + ts//2, gy + ts//2 - ts//4))
+                self.screen.blit(img, rect)
+            else:
+                lbl = self.small_font.render("G!", True, C_CONFIRMED)
+                self.screen.blit(lbl, (
+                    gx+ts//2-lbl.get_width()//2,
+                    gy+ts//2-lbl.get_height()//2))
 
-        # Agent
+        # ── Agent (start image, bob + flip) ───────────────────────────
         ax, ay, _ = self._cell_to_px(self.agent_r, self.agent_c)
-        pygame.draw.circle(self.screen, (30, 30, 30),
-                           (ax+ts//2, ay+ts//2), max(4, ts//3)+1)
-        pygame.draw.circle(self.screen, C_AGENT,
-                           (ax+ts//2, ay+ts//2), max(4, ts//3))
+        if self.start_img_raw:
+            size = max(4, int(ts * 1.6))
+            img  = self._scaled(self.start_img_raw, (size, size))
+            if not self._agent_facing_right:
+                img = pygame.transform.flip(img, True, False)
+            bob  = self._bob_offset if self.auto else 0
+            rect = img.get_rect(
+                center=(ax + ts//2, ay + ts//2 - ts//4 + bob))
+            self.screen.blit(img, rect)
+        else:
+            cx = ax + ts//2
+            cy = ay + ts//2 + (self._bob_offset if self.auto else 0)
+            pygame.draw.circle(self.screen, (20, 20, 20),
+                               (cx, cy), max(4, ts//3)+1)
+            pygame.draw.circle(self.screen, C_AGENT,
+                               (cx, cy), max(4, ts//3))
 
-        # Fog (chỉ Online khi đang chạy)
+        # Fog of war
         if self.fog_enabled and not self.edit_mode:
             fog = pygame.Surface((board.w, board.h), pygame.SRCALPHA)
             fog.fill((0, 0, 0, self.fog_alpha))
             for (r, c) in self._visible_cells():
-                pygame.draw.rect(fog, (0, 0, 0, 0), (c*ts, r*ts, ts, ts))
+                pygame.draw.rect(fog, (0, 0, 0, 0),
+                                 (c*ts, r*ts, ts, ts))
             self.screen.blit(fog, board.topleft)
 
-        # Edit cursor
+        # Edit cursor overlay
         if self.edit_mode:
             mx, my = pygame.mouse.get_pos()
             cell   = self._px_to_cell(mx, my)
@@ -1575,13 +2013,15 @@ class Stage4Forest:
                 hx, hy, _ = self._cell_to_px(hr, hc)
                 if self.moving_portal:
                     col   = C_PORTAL.get(self.moving_portal, (255, 255, 0))
-                    pulse = 0.5 + 0.5*math.sin(pygame.time.get_ticks()/200)
+                    pulse = 0.5 + 0.5*math.sin(
+                        pygame.time.get_ticks()/200)
                     pygame.draw.rect(self.screen, col,
-                                     (hx+1, hy+1, ts-2, ts-2), 3,
-                                     border_radius=3)
+                                     (hx+1, hy+1, ts-2, ts-2),
+                                     3, border_radius=3)
                     pygame.draw.rect(self.screen, (255, 255, 255),
                                      (hx+3, hy+3, ts-6, ts-6),
-                                     max(1, int(2*pulse)), border_radius=2)
+                                     max(1, int(2*pulse)),
+                                     border_radius=2)
                 else:
                     tool_col = {
                         "block":       (255, 140,   0),
@@ -1592,8 +2032,8 @@ class Stage4Forest:
                     }.get(self.edit_tool, (255, 255, 255))
                     if self.pending_place: tool_col = (0, 255, 0)
                     pygame.draw.rect(self.screen, tool_col,
-                                     (hx+1, hy+1, ts-2, ts-2), 2,
-                                     border_radius=2)
+                                     (hx+1, hy+1, ts-2, ts-2),
+                                     2, border_radius=2)
 
         # Detector popup
         self._draw_detector_popup()
@@ -1607,5 +2047,5 @@ class Stage4Forest:
                 t = self.tiny_font.render(str(r+1), True, (200, 200, 200))
                 self.screen.blit(t, (board.x-24, board.y+r*ts+2))
 
-        # Left panel
+        # Left panel (always last)
         self._layout_left_panel()

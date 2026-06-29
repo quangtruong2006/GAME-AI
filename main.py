@@ -15,7 +15,7 @@ class StageManager:
     def __init__(self, screen):
         self.screen = screen
         # Mảng lưu danh sách các chặng đã được mở
-        self.unlocked_stages = ["stage1"]
+        self.unlocked_stages = ["stage1", "stage2", "stage3", "stage4", "stage5", "stage6"]
         
         # --- THÊM 2 BIẾN NÀY ĐỂ QUẢN LÝ HOẠT ẢNH NỔ KHÓA ---
         self.current_stage_name = "menu"
