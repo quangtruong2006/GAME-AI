@@ -28,8 +28,8 @@ def evaluate_state(gamestate, is_p1_perspective):
     if elem_advantage == 2.0: score += 100
     if elem_disadvantage == 2.0: score -= 50
 
-    # Skill buff
-    if my_d.skills[1].is_ready(): score += 30 # Power Strike
-    if my_d.skills[2].is_ready(): score += 50 # Ultimate
+    # Skill buff: thưởng điểm khi skill sẵn sàng, Heavy Strike thưởng nhiều hơn vì dame cao
+    if my_d.skills[1].is_ready(): score += 30  # Power Strike  (dame 75,  acc 100%)
+    if my_d.skills[2].is_ready(): score += 50  # Heavy Strike  (dame 125, acc  50%)
 
     return score

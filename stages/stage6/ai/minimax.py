@@ -9,8 +9,8 @@ MINIMAX
 - Nhược điểm: chậm vì không cắt tỉa nhánh.
 """
 
-from game.evaluate import evaluate
-from game.do_act import do_act
+from evaluation import evaluate_state
+from combat import Combat
 
 
 class Minimax:
@@ -18,7 +18,7 @@ class Minimax:
     @staticmethod
     def run(gs, depth=2):
         """Entry point: trả về action tốt nhất."""
-        is_p1 = (gs.turn % 2 == 0)
+        is_p1 = (gs.turn_count % 2 == 0)
         _, action = Minimax._mm(gs, depth, True, is_p1)
         return action
 
@@ -36,21 +36,19 @@ class Minimax:
         Trả về:
             (score, best_action)
         """
-        # Base case
-        if depth == 0 or st.over():
-            return evaluate(st, is_p1), None
+        if depth == 0 or st.is_game_over():
+            return evaluate_state(st, is_p1), None
 
-        acts = st.actions()
+        acts = st.get_possible_actions()
         if not acts:
-            return evaluate(st, is_p1), None
+            return evaluate_state(st, is_p1), None
 
         best_action = acts[0]
         best_score  = float('-inf') if is_maximizing else float('inf')
 
         for a in acts:
-            # Simulate trên bản sao, force_hit=True (bỏ qua ngẫu nhiên)
             sim = st.clone()
-            do_act(sim, a, force=True)
+            Combat.execute_action(sim, a, is_real_combat=False, force_hit=True)
 
             score, _ = Minimax._mm(sim, depth - 1, not is_maximizing, is_p1)
 

@@ -14,9 +14,9 @@ def get_element_multiplier(atk_elem, def_elem):
 
 def create_base_skills():
     return [
-        Skill("Attack", 50, 100, 0),
-        Skill("Power Strike", 75, 100, 4),
-        Skill("Ultimate", 100, 75, 2)
+        Skill("Attack",       50,  100, 0),  # Đòn thường, luôn sẵn sàng
+        Skill("Power Strike", 75,  100, 3),  # Skill 1: dame 75, acc 100%, cd 3
+        Skill("Heavy Strike", 125,  50, 3),  # Skill 2: dame 125, acc 50%, cd 3
     ]
 
 def create_team(name, elements):

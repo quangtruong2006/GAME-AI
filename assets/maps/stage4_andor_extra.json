@@ -1012,5 +1012,7 @@
     ]
   ],
   "stars": [],
-  "belief_goals": []
+  "belief_goals": [],
+  "rand_star_count": 5,
+  "rand_belief_count": 5
 }

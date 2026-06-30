@@ -309,14 +309,14 @@ def make_team(name, elems):
     for e in elems:
         d = Dragon(f"{e} Dragon", e, 500)
         # -------------------------------------------------------
-        # Slash : DMG=50,  ACC=100%, CD=0  (luôn dùng được)
-        # Power : DMG=75,  ACC=100%, CD=3  (turn thứ 4 mới dùng lại)
-        # Ultim : DMG=100, ACC=75%,  CD=6  (turn thứ 7 mới dùng lại)
-        #         + hồi 50 HP cho bản thân nếu trúng (75%)
+        # Slash  : DMG=50,  ACC=100%, CD=0  (luôn dùng được)
+        # Power  : DMG=75,  ACC=100%, CD=3  (turn thứ 4 mới dùng lại)
+        # Heavy  : DMG=125, ACC=50%,  CD=3  (turn thứ 4 mới dùng lại)
+        #          dame cao nhưng chỉ 50% trúng, không hồi máu
         # -------------------------------------------------------
         d.add(Skill("Slash",  "normal",   50,  100, 0, heal=0))
         d.add(Skill("Power",  "power",    75,  100, 3, heal=0))
-        d.add(Skill("Ultim",  "ultimate", 100,  75, 6, heal=50))
+        d.add(Skill("Heavy",  "ultimate", 125,   50, 3, heal=0))
         p.add(d)
     return p
 

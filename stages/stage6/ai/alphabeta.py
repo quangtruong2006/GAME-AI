@@ -16,8 +16,8 @@ Nguyên lý cắt tỉa:
 - Nhược điểm: vẫn là worst-case như Minimax nếu thứ tự actions tệ.
 """
 
-from game.evaluate import evaluate
-from game.do_act import do_act
+from evaluation import evaluate_state
+from combat import Combat
 
 
 class AlphaBeta:
@@ -25,7 +25,7 @@ class AlphaBeta:
     @staticmethod
     def run(gs, depth=2):
         """Entry point: trả về action tốt nhất."""
-        is_p1 = (gs.turn % 2 == 0)
+        is_p1 = (gs.turn_count % 2 == 0)
         _, action = AlphaBeta._ab(
             gs, depth,
             alpha=float('-inf'),
@@ -51,19 +51,19 @@ class AlphaBeta:
         Trả về:
             (score, best_action)
         """
-        if depth == 0 or st.over():
-            return evaluate(st, is_p1), None
+        if depth == 0 or st.is_game_over():
+            return evaluate_state(st, is_p1), None
 
-        acts = st.actions()
+        acts = st.get_possible_actions()
         if not acts:
-            return evaluate(st, is_p1), None
+            return evaluate_state(st, is_p1), None
 
         best_action = acts[0]
         best_score  = float('-inf') if is_maximizing else float('inf')
 
         for a in acts:
             sim = st.clone()
-            do_act(sim, a, force=True)
+            Combat.execute_action(sim, a, is_real_combat=False, force_hit=True)
 
             score, _ = AlphaBeta._ab(
                 sim, depth - 1, alpha, beta, not is_maximizing, is_p1
@@ -73,16 +73,13 @@ class AlphaBeta:
                 if score > best_score:
                     best_score  = score
                     best_action = a
-                # Cập nhật alpha
                 alpha = max(alpha, best_score)
             else:
                 if score < best_score:
                     best_score  = score
                     best_action = a
-                # Cập nhật beta
                 beta = min(beta, best_score)
 
-            # Cắt tỉa
             if beta <= alpha:
                 break
 
