@@ -4,6 +4,7 @@ import math
 import os
 import json
 import random
+import time
 from ui.victory_panel import VictoryPanel
 
 try:
@@ -128,13 +129,27 @@ class Stage5Seal:
             label="AI speed (ms)"
         )
 
-        # ── timing ──
+        # ── timing (AI CPU time) ──
+        self.ai_time_ms     = 0.0
+        self.execution_time = "0.0 µs"
+
+        # (giữ lại biến cũ nếu bạn còn dùng chỗ khác; không hiển thị nữa)
         self.run_start_time = 0
         self.run_elapsed_ms = 0
 
         # ── UI ──
         self.ui_buttons  = {}
         self.victory_panel = VictoryPanel(screen, stage_manager)
+
+    # ==================================================================
+    #  Time helper (AI CPU time)
+    # ==================================================================
+    def _fmt_exec_time(self, ms: float) -> str:
+        if ms < 1.0:
+            return f"{ms*1000.0:.1f} µs"
+        if ms < 1000.0:
+            return f"{ms:.2f} ms"
+        return f"{ms/1000.0:.2f} s"
 
     # ==================================================================
     #  Asset / map helpers
@@ -282,9 +297,9 @@ class Stage5Seal:
             (255, 220, 80)
         )
         lines = [
-            ("Phase",  self.phase,           p_color),
-            ("Steps",  str(self.steps_count), (255, 220, 80)),
-            ("Time",   f"{self.run_elapsed_ms} ms", (255, 220, 80)),
+            ("Phase",    self.phase,            p_color),
+            ("Steps",    str(self.steps_count), (255, 220, 80)),
+            ("AI Time",  self.execution_time,   (255, 220, 80)),  # ← AI CPU time
         ]
         line_h  = 18
         total_h = len(lines) * line_h + 4
@@ -431,10 +446,14 @@ class Stage5Seal:
         # Victory panel
         panel_action = self.victory_panel.handle_events(events)
         if panel_action == "replay":
-            self.phase          = "idle"
+            self.phase            = "idle"
             self.solver_generator = None
-            self.steps_count    = 0
-            self.run_elapsed_ms = 0
+            self.steps_count      = 0
+            self.run_elapsed_ms   = 0
+
+            # reset AI time
+            self.ai_time_ms       = 0.0
+            self.execution_time   = "0.0 µs"
             return
         if self.victory_panel.visible:
             return
@@ -481,6 +500,12 @@ class Stage5Seal:
                                 self.steps_count    = 0
                                 self.run_start_time = pygame.time.get_ticks()
                                 self.run_elapsed_ms = 0
+                                self.last_step_time = 0
+
+                                # reset AI time (CPU)
+                                self.ai_time_ms     = 0.0
+                                self.execution_time = "0.0 µs"
+
                                 try:
                                     if self.selected_algorithm == "Pure BT":
                                         self.solver_generator = solve_pure_backtracking(
@@ -503,14 +528,20 @@ class Stage5Seal:
 
                         # reset
                         if name == "reset":
-                            self.phase            = "idle"
-                            self.solver_generator = None
+                            self.phase                 = "idle"
+                            self.solver_generator      = None
                             self.victory_panel.visible = False
                             for r in range(self.rows):
                                 for c in range(self.cols):
                                     if self.grid[r][c] in [1, 2]:
                                         self.grid[r][c] = 0
                             self.load_map()
+
+                            # reset AI time
+                            self.ai_time_ms     = 0.0
+                            self.execution_time = "0.0 µs"
+                            self.steps_count    = 0
+                            self.run_elapsed_ms = 0
                             return
 
                         # random map
@@ -541,10 +572,10 @@ class Stage5Seal:
                     c = (pos[0] - self.start_x) // self.cell_size
                     r = (pos[1] - self.start_y) // self.cell_size
                     if 0 <= r < self.rows and 0 <= c < self.cols:
-                        if self.edit_mode == "add_obs":    self.grid[r][c] = 3
-                        elif self.edit_mode == "erase":    self.grid[r][c] = 0
-                        elif self.edit_mode == "set_source": self.grid[r][c] = 8
-                        elif self.edit_mode == "set_goal": self.grid[r][c] = 9
+                        if self.edit_mode == "add_obs":       self.grid[r][c] = 3
+                        elif self.edit_mode == "erase":       self.grid[r][c] = 0
+                        elif self.edit_mode == "set_source":  self.grid[r][c] = 8
+                        elif self.edit_mode == "set_goal":    self.grid[r][c] = 9
 
             # giữ chuột để vẽ liên tục
             elif event.type == pygame.MOUSEMOTION:
@@ -554,10 +585,10 @@ class Stage5Seal:
                         c = (pos[0] - self.start_x) // self.cell_size
                         r = (pos[1] - self.start_y) // self.cell_size
                         if 0 <= r < self.rows and 0 <= c < self.cols:
-                            if self.edit_mode == "add_obs":      self.grid[r][c] = 3
-                            elif self.edit_mode == "erase":      self.grid[r][c] = 0
-                            elif self.edit_mode == "set_source": self.grid[r][c] = 8
-                            elif self.edit_mode == "set_goal":   self.grid[r][c] = 9
+                            if self.edit_mode == "add_obs":       self.grid[r][c] = 3
+                            elif self.edit_mode == "erase":       self.grid[r][c] = 0
+                            elif self.edit_mode == "set_source":  self.grid[r][c] = 8
+                            elif self.edit_mode == "set_goal":    self.grid[r][c] = 9
 
     # ==================================================================
     #  Update
@@ -571,10 +602,19 @@ class Stage5Seal:
             now = pygame.time.get_ticks()
             if now - self.last_step_time > int(self.step_delay_ms):
                 try:
+                    # ── đo AI CPU time cho 1 lần next() ──
+                    t0 = time.perf_counter()
                     res = next(self.solver_generator)
+                    step_ms = (time.perf_counter() - t0) * 1000.0
+
+                    self.ai_time_ms += step_ms
+                    self.execution_time = self._fmt_exec_time(self.ai_time_ms)
+
                     self.last_step_time = now
+
                     if res == "update":
                         self.steps_count += 1
+
                     elif res is True:
                         self.phase = "completed"
                         laser_path      = self._calculate_laser_path()
@@ -586,9 +626,12 @@ class Stage5Seal:
                             subtitle = f"Độ dài đường truyền: {final_path_cost} ô!",
                             nodes_visited = self.steps_count,
                             path_cost     = final_path_cost,
+                            exec_time     = self.execution_time,  # ← AI CPU time
                         )
+
                     elif res is False:
                         self.phase = "failed"
+
                 except StopIteration:
                     pass
                 except Exception as e:

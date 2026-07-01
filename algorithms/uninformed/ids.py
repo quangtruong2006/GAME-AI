@@ -66,66 +66,34 @@ def depth_limited_search(graph, start, goal, limit, visited_order):
 
 
 def ids(graph, start, goal):
-    """
-    function ITERATIVE-DEEPENING-SEARCH(problem) returns a solution node or failure
-    
-    Bám sát slide bài giảng:
-      for depth = 0 to ∞ do
-          result <- DEPTH-LIMITED-SEARCH(problem, depth)
-          if result ≠ cutoff then return result
-    """
-    start_time = time.time()
+    start_time = time.perf_counter()
 
-    # Kiểm tra node tồn tại trong đồ thị
     if start not in graph or goal not in graph:
-        return [], [], 0, "0.0 ms"
+        return [], [], 0, 0.0
 
-    # Kiểm tra goal ngay tại node ban đầu
     if start == goal:
-        end_time      = time.time()
-        exec_time     = (end_time - start_time) * 1000
-        return [], [], 1, f"{exec_time:.2f} ms"
+        return [], [], 1, (time.perf_counter() - start_time) * 1000.0
 
-    # visited_order tích lũy qua toàn bộ các vòng lặp depth
-    # (reset mỗi vòng để hiển thị đúng thứ tự duyệt của lần cuối tìm thấy)
     all_visited_order = []
 
-    # for depth = 0 to ∞ do
-    for depth_limit in range(len(graph)):  # Giới hạn tối đa = số node (tránh vòng lặp vô tận)
-
-        # Reset visited_order cho mỗi vòng lặp mới
+    for depth_limit in range(len(graph) + 1):
         visited_order_this_round = []
-
-        # result <- DEPTH-LIMITED-SEARCH(problem, depth)
         path_found, visited_this, status = depth_limited_search(
             graph, start, goal, depth_limit, visited_order_this_round
         )
 
-        # Tích lũy tất cả node đã duyệt qua mọi vòng lặp để hiển thị
         for v in visited_this:
             if v not in all_visited_order:
                 all_visited_order.append(v)
 
-        # if result ≠ cutoff then return result
         if status == "found":
-            # Trích xuất đường đi trung gian (bỏ start và goal)
             path_middle = [n for n in path_found if n != start and n != goal]
-
-            end_time      = time.time()
-            exec_time     = (end_time - start_time) * 1000
-            nodes_expanded = len(all_visited_order)
-
-            return path_middle, all_visited_order, nodes_expanded, f"{exec_time:.2f} ms"
+            exec_ms = (time.perf_counter() - start_time) * 1000.0
+            return path_middle, all_visited_order, len(all_visited_order), exec_ms
 
         elif status == FAILURE:
-            # Không tìm thấy và không bị cutoff -> thực sự không có đường đi
-            end_time  = time.time()
-            exec_time = (end_time - start_time) * 1000
-            return [], all_visited_order, len(all_visited_order), f"{exec_time:.2f} ms"
+            exec_ms = (time.perf_counter() - start_time) * 1000.0
+            return [], all_visited_order, len(all_visited_order), exec_ms
 
-        # Nếu status == CUTOFF -> tiếp tục tăng depth_limit
-
-    # Vượt quá số node tối đa -> failure
-    end_time  = time.time()
-    exec_time = (end_time - start_time) * 1000
-    return [], all_visited_order, len(all_visited_order), f"{exec_time:.2f} ms"
+    exec_ms = (time.perf_counter() - start_time) * 1000.0
+    return [], all_visited_order, len(all_visited_order), exec_ms

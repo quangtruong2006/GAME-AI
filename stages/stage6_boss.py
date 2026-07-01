@@ -1002,8 +1002,7 @@ class Stage6Boss:
         legend = [
             ("Slash", "50 dmg  • 100% • CD 0",           (180,180,120)),
             ("Power", "75 dmg  • 100% • CD 3 turns",     (200,140,80)),
-            ("Ultim", "100 dmg • 75%  • CD 6 turns",     (160,100,220)),
-            ("Ultim", "+50 HP heal on hit (75%)",         (100,220,140)),
+            ("Heavy", "125 dmg • 50%  • CD 3 turns",     (160,100,220)),
             ("SW",    "Free switch, no lock",             (100,180,255)),
         ]
         for lname, ldesc, lcol in legend:

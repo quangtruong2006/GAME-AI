@@ -6,13 +6,13 @@ import json
 import time
 from collections import deque
 from ui.victory_panel import VictoryPanel
-from algorithms.informed.a_star  import a_star
-from algorithms.informed.greedy  import greedy_search
+from algorithms.informed.a_star import a_star
+from algorithms.informed.greedy import greedy_search
 from algorithms.informed.ida_star import ida_star
 
 
 # ─────────────────────────────────────────────
-# Slider  (bản dùng chung – giống stage1)
+# Slider (bản dùng chung – giống stage1)
 # ─────────────────────────────────────────────
 class Slider:
     def __init__(self, rect, vmin, vmax, value, label=""):
@@ -63,6 +63,7 @@ class Stage2City:
     """
     Chặng 2 – Đồ thị có trọng số (A* / Greedy / IDA*)
     Panel trái theo khuôn stage1: algo → actions → sliders → edit → back
+    Đã thêm hiển thị "Thời gian" ở panel trái và victory panel.
     """
 
     PANEL_W = 200
@@ -116,7 +117,7 @@ class Stage2City:
         self.show_editor      = False
         self.current_tool     = "ADD_NODE"
         self.current_edge_type= 1
-        self.sel_node_edge    = None   # first node for connect/del_edge
+        self.sel_node_edge    = None
 
         # algo
         self.selected_algorithm = "A* Search"
@@ -136,7 +137,7 @@ class Stage2City:
         # stats
         self.nodes_expanded = 0
         self.path_cost      = 0
-        self.execution_time = "0.0 ms"
+        self.execution_time = "0.0 µs"
 
         # replay snapshot
         self._snap = None
@@ -182,6 +183,14 @@ class Stage2City:
         elif fallback:
             pygame.draw.circle(self.screen, fallback, (int(center[0]),int(center[1])), 10)
 
+    def _fmt_exec_time(self, ms: float) -> str:
+        """Format thời gian AI: µs → ms → s"""
+        if ms < 1.0:
+            return f"{ms*1000:.1f} µs"
+        if ms < 1000.0:
+            return f"{ms:.2f} ms"
+        return f"{ms/1000.0:.2f} s"
+
     # ─────── graph I/O ───────
     def _save_graph_data(self):
         data = {"nodes":self.nodes,"edges":self.edges,
@@ -208,7 +217,6 @@ class Stage2City:
         self.start_node = data.get("start")
         self.goal_node  = data.get("goal")
 
-    # ─────── BFS for mouse route ───────
     def _bfs_path(self, start, end):
         if start==end: return [start]
         q = deque([start]); prev = {start:None}
@@ -227,7 +235,7 @@ class Stage2City:
         self.blue_edges_done.clear(); self.green_edges_done.clear()
         self.mouse_route=[]; self.mouse_seg=0; self.mouse_t=0.0; self.mouse_visible=False
         self.solution_path=[]; self.nobita_seg=0; self.nobita_t=0.0; self.nobita_mode="at_start"
-        self.nodes_expanded=0; self.path_cost=0; self.execution_time="0.0 ms"
+        self.nodes_expanded=0; self.path_cost=0; self.execution_time="0.0 µs"
         self.phase="idle"; self.msg="Reset."; self._snap=None
 
     def _replay(self):
@@ -249,13 +257,18 @@ class Stage2City:
         npx = self._nodes_px()
 
         if self.selected_algorithm == "A* Search":
-            p,v,n,t,c = a_star(npx, self.edges, self.start_node, self.goal_node)
+            p, v, n, t, c = a_star(npx, self.edges, self.start_node, self.goal_node)
         elif self.selected_algorithm == "Greedy BFS":
-            p,v,n,t,c = greedy_search(npx, self.edges, self.start_node, self.goal_node)
+            p, v, n, t, c = greedy_search(npx, self.edges, self.start_node, self.goal_node)
         else:
-            p,v,n,t,c = ida_star(npx, self.edges, self.start_node, self.goal_node)
+            p, v, n, t, c = ida_star(npx, self.edges, self.start_node, self.goal_node)
 
-        self.execution_time = t
+        # Xử lý thời gian (cả float lẫn string đều được)
+        if isinstance(t, (int, float)):
+            self.execution_time = self._fmt_exec_time(t)
+        else:
+            self.execution_time = str(t)
+
         self.nodes_expanded = n
         self.solution_path  = p
         self.path_cost      = c
@@ -272,7 +285,7 @@ class Stage2City:
 
         self._snap = {"mouse_route":list(route), "solution_path":list(p or [])}
 
-    # ─────── UI rects (khuôn stage1) ───────
+    # ─────── UI rects ───────
     def _ui_rects(self):
         sh   = self.sh
         pad  = self.PAD; pw = self.PANEL_W
@@ -331,10 +344,9 @@ class Stage2City:
             "back":          back_btn,
         }
 
-    # ─────── Draw button ───────
     def _btn(self, rect, text, active=False, color=None, disabled=False):
         if disabled:
-            bg     = (70, 70, 70)      # xám/đen
+            bg     = (70, 70, 70)
             border = (90, 90, 90)
             fg     = (150, 150, 150)
         else:
@@ -360,7 +372,6 @@ class Stage2City:
             if self.slider_search.handle_event(event): self.search_speed = self.slider_search.value
             if self.slider_nobita.handle_event(event): self.nobita_speed = self.slider_nobita.value
 
-            # edge type hotkeys
             if event.type == pygame.KEYDOWN and self.show_editor and self.current_tool=="CONNECT":
                 key_map = {pygame.K_1:1, pygame.K_KP1:1,
                            pygame.K_2:2, pygame.K_KP2:2,
@@ -372,7 +383,6 @@ class Stage2City:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button==1:
                 pos = event.pos
 
-                # ── panel buttons ──
                 if pos[0] < self.PANEL_W:
                     if ui["back"].collidepoint(pos):
                         self.stage_manager.change_stage("stage_select"); return
@@ -401,7 +411,6 @@ class Stage2City:
                         if "SAVE" in ed and ed["SAVE"].collidepoint(pos): self._save_graph_data(); return
                         if "LOAD" in ed and ed["LOAD"].collidepoint(pos): self._load_graph_data(); return
 
-                # ── canvas ──
                 elif self.map_rect.collidepoint(pos) and self.show_editor and self.phase=="idle":
                     self._handle_canvas(pos)
 
@@ -438,7 +447,6 @@ class Stage2City:
             self.nodes.pop(hit)
             self.edges.pop(hit,None)
             for u in list(self.edges): self.edges[u].pop(hit,None)
-            # re-index
             new_e={}
             for old_u,nb in self.edges.items():
                 nu = old_u-1 if old_u>hit else old_u
@@ -501,8 +509,9 @@ class Stage2City:
                     next_stage_unlock = "stage3",
                     title    = "CHẶNG 2 HOÀN THÀNH!",
                     subtitle = "Tín hiệu đã được gửi đi!",
-                    nodes_visited = self.nodes_expanded,   # ← thêm
-                    path_cost     = self.path_cost,        # ← thêm
+                    nodes_visited = self.nodes_expanded,
+                    path_cost     = self.path_cost,
+                    exec_time     = self.execution_time,      # ← ĐÃ THÊM
                 )
 
     # ─────── Draw ───────
@@ -510,15 +519,12 @@ class Stage2City:
         ui  = self._ui_rects()
         npx = self._nodes_px()
 
-        # sync sliders
         self.slider_search.rect = ui["slider_search"]
         self.slider_nobita.rect = ui["slider_nobita"]
 
-        # background
         self.screen.fill(self.c_bg)
         if self.bg_image: self.screen.blit(self.bg_image,(self.map_rect.x,self.map_rect.y))
 
-        # editor graph overlay
         if self.show_editor:
             for u,nb in self.edges.items():
                 for v,d in nb.items():
@@ -530,13 +536,11 @@ class Stage2City:
                         elif t==8: col=(255,0,255);  w=6
                         pygame.draw.line(self.screen,col,npx[u],npx[v],w)
 
-        # trails
         for a,b in self.blue_edges_done:
             pygame.draw.line(self.screen,self.BLUE, npx[a],npx[b],self.BLUE_TH)
         for a,b in self.green_edges_done:
             pygame.draw.line(self.screen,self.GREEN,npx[a],npx[b],self.GREEN_TH)
 
-        # partial
         def draw_partial(route,seg,t,col,thick):
             if not route or seg>=len(route)-1: return None
             a,b=route[seg],route[seg+1]
@@ -551,7 +555,6 @@ class Stage2City:
             thick=self.BLUE_TH if self.phase=="searching" else self.GREEN_TH
             mouse_pos=draw_partial(self.mouse_route,self.mouse_seg,self.mouse_t,col,thick)
 
-        # characters
         char_h=max(40,int(self.sh*0.08)); mouse_h=max(22,int(self.sh*0.045))
         if self.goal_node is not None:
             self._blit_scaled(self.goal_img_raw, npx[self.goal_node], char_h, self.c_dora)
@@ -569,14 +572,13 @@ class Stage2City:
                 mouse_pos=npx[self.mouse_route[min(self.mouse_seg,len(self.mouse_route)-1)]]
             self._blit_scaled(self.mouse_img_raw, mouse_pos, mouse_h, (255,255,0))
 
-        # editor nodes
         if self.show_editor:
             for i,pos in enumerate(npx):
                 col=(255,255,255) if i in (self.start_node,self.goal_node) else (200,200,200)
                 pygame.draw.circle(self.screen,col,pos,5)
                 pygame.draw.circle(self.screen,(0,0,0),pos,5,1)
 
-        # ════ LEFT PANEL ════
+        # LEFT PANEL
         panel=pygame.Surface((self.PANEL_W,self.sh),pygame.SRCALPHA)
         panel.fill((30,33,36,200))
         self.screen.blit(panel,(0,0))
@@ -585,34 +587,21 @@ class Stage2City:
         self.screen.blit(self.title_font.render("CHẶNG 2",     True,(255,200,60)),(self.PAD,10))
         self.screen.blit(self.font.render("Informed Search",True,(180,180,180)),(self.PAD,32))
 
-        # algo buttons
         for alg in ("A* Search","Greedy BFS","IDA*"):
             self._btn(ui[alg], alg, active=(self.selected_algorithm==alg))
 
-        # actions
         is_running = self.phase in ("searching", "returning", "nobita_moving")
 
-        self._btn(ui["run"], "▶ RUN AI",
-                color=(46, 204, 113),
-                disabled=is_running)
+        self._btn(ui["run"], "▶ RUN AI", color=(46, 204, 113), disabled=is_running)
+        self._btn(ui["cancel"], "■ CANCEL", color=(231, 76, 60), disabled=(not is_running))
+        self._btn(ui["reset"], "↺ RESET", color=(155, 89, 182))
 
-        # giống chặng 5: idle -> disabled (đen/xám), running -> đỏ
-        self._btn(ui["cancel"], "■ CANCEL",
-                color=(231, 76, 60),
-                disabled=(not is_running))
-
-        self._btn(ui["reset"], "↺ RESET",
-                color=(155, 89, 182))
-
-        # sliders
         self.slider_search.draw(self.screen,self.font)
         self.slider_nobita.draw(self.screen,self.font)
 
-        # edit toggle
         lbl="EDIT MAP  [-]" if self.show_editor else "EDIT MAP  [+]"
         self._btn(ui["edit_toggle"],lbl,active=self.show_editor)
 
-        # editor 2-col
         if self.show_editor:
             ed=ui["editor"]
             lbl_map={"ADD_NODE":"ADD NODE","CONNECT":"CONNECT",
@@ -622,21 +611,15 @@ class Stage2City:
             for tid,lab in lbl_map.items():
                 if tid in ed: self._btn(ed[tid],lab,active=(self.current_tool==tid))
 
-        # replay
         if ui["replay"]: self._btn(ui["replay"],"⟳ REPLAY",color=(230,126,34))
-
-        # back
         self._btn(ui["back"],"◀ BACK",color=(231,76,60))
 
-        # stats
         self._draw_stats()
-
-        # victory
         self.victory_panel.update()
         self.victory_panel.draw()
 
     def _draw_stats(self):
-        """Stats cố định ở góc trái dưới, ngay trên nút BACK."""
+        """Stats cố định ở góc trái dưới, ngay trên nút BACK. Đã thêm Thời gian."""
         phase_label={
             "idle":          "Idle",
             "searching":     "🔍 Searching...",
@@ -648,16 +631,18 @@ class Stage2City:
 
         lines=[
             ("Trạng thái", phase_label),
-            ("Nodes duyệt",str(self.nodes_expanded)),
-            ("Chi phí",    str(self.path_cost)),
+            ("Nodes duyệt", str(self.nodes_expanded)),
+            ("Chi phí",     str(self.path_cost)),
+            ("Thời gian",   self.execution_time),          # ← ĐÃ THÊM
         ]
-        line_h=18; total_h=len(lines)*line_h+8
+        line_h=18
+        total_h=len(lines)*line_h+8
         back_top = self.sh-54
         y0=back_top-total_h-10
 
         for i,(key,val) in enumerate(lines):
             y=y0+i*line_h
             ks=self.small_font.render(f"{key}:",True,(160,160,160))
-            vs=self.small_font.render(val,      True,(255,220,80))
+            vs=self.small_font.render(str(val), True,(255,220,80))
             self.screen.blit(ks,(self.PAD,y))
             self.screen.blit(vs,(self.PAD+ks.get_width()+4,y))

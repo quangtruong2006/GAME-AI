@@ -1,110 +1,135 @@
 # File: algorithms/csp/min_conflicts.py
-
 import random
 
+
 def solve_min_conflicts(grid, rows, cols, start_r, start_c):
-    MAX_STEPS = 9000
-    RESTART_LIMIT = 150 # Chờ 150 bước ngọn laser đứng im mới đập bàn cờ
-    
+    """
+    MIN-CONFLICTS bám mã giả AIMA, đồng bộ cấu trúc ràng buộc với bản
+    Pure Backtracking (solve_pure_backtracking).
+
+    RÀNG BUỘC:
+        trace_laser() trả "fail" nếu tia ra biên / đâm đá / lặp vô hạn.
+        "goal" không phải ràng buộc, chỉ là điều kiện kết thúc/thắng,
+        kiểm tra riêng ở is_current_a_solution().
+
+    GIỚI HẠN CHẠY:
+        MAX_STEPS = 1000, STUCK_LIMIT = 50 để dừng sớm khi phát hiện
+        lặp lại trạng thái cũ (plateau/local optimum), tránh chờ quá lâu.
+    """
+
+    MAX_STEPS   = 1000
+    STUCK_LIMIT = 50
+
     variables = [(r, c) for r in range(rows) for c in range(cols) if grid[r][c] == 0]
     var_set = set(variables)
 
-    if not variables: yield False; return
+    if not variables:
+        print("[MIN-CONFLICTS] Không có ô trống nào để gán biến -> failure ngay.")
+        yield False
+        return
 
-    def reflect(dr, dc, v):
-        if v == 1: return -dc, -dr
-        if v == 2: return dc, dr
+    def reflect(dr, dc, val):
+        if val == 1:
+            return -dc, -dr
+        if val == 2:
+            return dc, dr
         return dr, dc
 
-    def evaluate_board():
+    def trace_laser():
         r, c, dr, dc = start_r, start_c, 0, 1
-        visited = set(); path = []
+        visited_states = set()
+        path = []
         while True:
-            if not (0 <= r < rows and 0 <= c < cols): return "out_of_bounds", path
-            
-            st = (r, c, dr, dc)
-            if st in visited: 
-                try: return "loop", path[path.index((r, c)):]
-                except ValueError: return "loop", path
-                    
-            visited.add(st); path.append((r, c))
+            if not (0 <= r < rows and 0 <= c < cols):
+                return "fail", path, "out_of_bounds"
+
+            state = (r, c, dr, dc)
+            if state in visited_states:
+                return "fail", path, "loop"
+            visited_states.add(state)
+            path.append((r, c))
+
             v = grid[r][c]
-            
-            if v == 3: return "hit_rock", path
-            if v == 9: return "success", path
-            dr, dc = reflect(dr, dc, v); r, c = r + dr, c + dc
+            if v == 3:
+                return "fail", path, "hit_rock"
+            if v == 9:
+                return "goal", path, None
+
+            dr, dc = reflect(dr, dc, v)
+            r, c = r + dr, c + dc
+
+    def is_current_a_solution():
+        status, path, _ = trace_laser()
+        return (status == "goal"), path
 
     def CONFLICTS(var_r, var_c, v):
-        old = grid[var_r][var_c]; grid[var_r][var_c] = v
-        status, _ = evaluate_board()
+        old = grid[var_r][var_c]
+        grid[var_r][var_c] = v
+        status, _, _ = trace_laser()
         grid[var_r][var_c] = old
-        
-        score = 0
-        if status == "loop": score += 10 
-        elif status in ["hit_rock", "out_of_bounds"]: score += 1 
-        if status != "success": score += 1
-        return score
+        return 0 if status == "goal" else 1
 
-    # Khởi tạo ban đầu (Nhiều ô trống hơn để map sạch sẽ)
-    for (r, c) in variables: grid[r][c] = random.choice([0, 0, 0, 1, 2])
+    # ── current <- an initial complete assignment for csp ──
+    for (r, c) in variables:
+        grid[r][c] = random.choice([0, 1, 2])
     yield "update"
 
-    stuck = 0
-    last_endpoint = None
+    seen_states = set()
+    stuck_counter = 0
 
+    # ── for i = 1 to max_steps do ──
     for i in range(MAX_STEPS):
-        status, path = evaluate_board()
-        
-        if status == "success":
+
+        is_solution, path = is_current_a_solution()
+        if is_solution:
             for (r, c) in variables:
-                if (r, c) not in path: grid[r][c] = 0
-            yield "update"; yield True; return
+                if (r, c) not in path:
+                    grid[r][c] = 0
+            print(f"[MIN-CONFLICTS] Tìm ra nghiệm sau {i} bước.")
+            yield "update"
+            yield True
+            return
 
-        current_endpoint = path[-1] if path else (start_r, start_c)
-        if current_endpoint != last_endpoint:
-            last_endpoint = current_endpoint
-            stuck = 0 # Ngọn laser dịch chuyển -> Xóa án kẹt!
+        _, _, fail_reason = trace_laser()
+
+        # ── Phát hiện bế tắc/plateau để dừng sớm ──
+        state_key = tuple(grid[r][c] for (r, c) in variables)
+        if state_key in seen_states:
+            stuck_counter += 1
         else:
-            stuck += 1 # Ngọn laser đứng im một chỗ -> Bắt đầu đếm kẹt
+            seen_states.add(state_key)
+            stuck_counter = 0
+            if len(seen_states) > 2000:
+                seen_states.clear()
 
-        conflicted = [(r, c) for (r, c) in path if (r, c) in var_set]
-        
-        if conflicted:
-            if status == "loop": 
-                mirrors = [p for p in conflicted if grid[p[0]][p[1]] in (1, 2)]
-                var_r, var_c = random.choice(mirrors if mirrors else conflicted)
-            else: 
-                # ========================================================
-                # CƠ CHẾ RÚT LUI CHIẾN THUẬT (KHÔNG BAO GIỜ DỰT VỀ TÍT TRƯỚC NỮA)
-                # ========================================================
-                # Cứ 3 bước kẹt ở ngọn, nó sẽ lùi về cái gương trước đó 1 nhịp
-                retreat_steps = stuck // 3
-                target_index = -1 - retreat_steps
-                
-                # Hàm max() để đảm bảo AI không lùi quá xa lọt ra ngoài mảng
-                target_index = max(target_index, -len(conflicted)) 
-                
-                var_r, var_c = conflicted[target_index]
-        else: 
-            var_r, var_c = random.choice(list(var_set)) 
+        if stuck_counter >= STUCK_LIMIT:
+            print(f"[MIN-CONFLICTS] DỪNG SỚM tại bước {i}: "
+                  f"lặp lại cùng tập trạng thái {STUCK_LIMIT} lần liên tiếp "
+                  f"(plateau/local optimum). Ràng buộc vi phạm lần cuối: '{fail_reason}'.")
+            yield False
+            return
 
-        current_val = grid[var_r][var_c]
-        best_vals = []; min_conflicts = float("inf")
-        
+        # var <- a randomly chosen conflicted variable
+        conflicted_vars = [(r, c) for (r, c) in path if (r, c) in var_set]
+        if not conflicted_vars:
+            var_r, var_c = random.choice(variables)
+        else:
+            var_r, var_c = random.choice(conflicted_vars)
+
+        # value <- the value v that minimizes CONFLICTS(var, v, current, csp)
+        best_conflicts = float("inf")
+        best_candidates = []
         for v in [0, 1, 2]:
-            if v == current_val: continue
-            c = CONFLICTS(var_r, var_c, v)
-            if c < min_conflicts: min_conflicts = c; best_vals = [v]
-            elif c == min_conflicts: best_vals.append(v)
+            c_count = CONFLICTS(var_r, var_c, v)
+            if c_count < best_conflicts:
+                best_conflicts = c_count
+                best_candidates = [v]
+            elif c_count == best_conflicts:
+                best_candidates.append(v)
 
-        if not best_vals: best_vals = [v for v in [0, 1, 2] if v != current_val]
-        grid[var_r][var_c] = random.choice(best_vals)
+        best_value = random.choice(best_candidates)
+        grid[var_r][var_c] = best_value
         yield "update"
 
-        if stuck >= RESTART_LIMIT:
-            for (r, c) in variables: grid[r][c] = random.choice([0, 0, 0, 1, 2])
-            stuck = 0
-            last_endpoint = None
-            yield "update"
-
+    print(f"[MIN-CONFLICTS] Hết {MAX_STEPS} bước mà chưa tìm được nghiệm -> failure.")
     yield False

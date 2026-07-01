@@ -6,6 +6,10 @@ import os
 import time
 from collections import deque
 from ui.victory_panel import VictoryPanel
+
+# Import từ các file algorithm (đây là yêu cầu của bạn)
+from algorithms.uninformed.bfs import bfs
+from algorithms.uninformed.dfs import dfs
 from algorithms.uninformed.ids import ids
 
 
@@ -130,7 +134,7 @@ class Stage1Maze:
         # ── stats ──
         self.nodes_expanded = 0
         self.path_cost      = 0
-        self.execution_time = "0.0 ms"
+        self.execution_time = "0.0 µs"
 
         # ── speeds ──
         self.mouse_speed_px  = 520.0
@@ -153,7 +157,6 @@ class Stage1Maze:
         self.nobita_mode   = "at_start"   # at_start / moving / at_goal
 
         # ── replay snapshot ──
-        # Lưu lại toàn bộ trạng thái animation để REPLAY
         self._snap = None
 
         self._last_ticks = pygame.time.get_ticks()
@@ -179,7 +182,15 @@ class Stage1Maze:
         now  = pygame.time.get_ticks()
         dt   = max(0.0, (now - self._last_ticks) / 1000.0)
         self._last_ticks = now
-        return dt
+        return min(dt, 0.05)   # clamp để tránh nhảy quá xa khi lag
+
+    def _fmt_exec_time(self, ms: float) -> str:
+        """Format thời gian AI: µs → ms → s"""
+        if ms < 1.0:
+            return f"{ms*1000:.1f} µs"
+        if ms < 1000.0:
+            return f"{ms:.2f} ms"
+        return f"{ms/1000.0:.2f} s"
 
     def _map_rect(self):
         sw, sh = self.screen.get_size()
@@ -226,64 +237,6 @@ class Stage1Maze:
         for k in g: g[k].sort()
         return g
 
-    # ─────────────────────────────────────────
-    # BFS / DFS trace
-    # ─────────────────────────────────────────
-    def _bfs_trace(self, graph, start, goal):
-        t0 = time.time()
-        q = deque([start]); reached = {start}; parent = {start: None}
-        visited = []; found = False
-        while q:
-            cur = q.popleft()
-            if cur != start and cur != goal:
-                visited.append(cur)
-            for nb in graph[cur]:
-                if nb not in reached:
-                    reached.add(nb); parent[nb] = cur
-                    if nb == goal:
-                        found = True; q.clear(); break
-                    q.append(nb)
-        path = []
-        if found:
-            x = goal
-            while x is not None: path.append(x); x = parent.get(x)
-            path.reverse()
-        return path, visited, parent, f"{(time.time()-t0)*1000:.2f} ms"
-
-    def _dfs_trace(self, graph, start, goal):
-        t0 = time.time()
-        stack = [start]; reached = {start}; parent = {start: None}
-        visited = []; found = False
-        while stack:
-            cur = stack.pop()
-            if cur != start and cur != goal:
-                visited.append(cur)
-            for nb in reversed(graph[cur]):
-                if nb not in reached:
-                    reached.add(nb); parent[nb] = cur
-                    if nb == goal:
-                        found = True; stack.clear(); break
-                    stack.append(nb)
-        path = []
-        if found:
-            x = goal
-            while x is not None: path.append(x); x = parent.get(x)
-            path.reverse()
-        return path, visited, parent, f"{(time.time()-t0)*1000:.2f} ms"
-
-    def _tree_route(self, u, v, parent):
-        if u == v: return [u]
-        def to_root(x):
-            out = []
-            while x is not None: out.append(x); x = parent.get(x)
-            return out
-        pu = to_root(u); pv = to_root(v); su = set(pu)
-        lca = next((n for n in pv if n in su), None)
-        if lca is None: return [u, v]
-        up   = pu[:pu.index(lca)+1]
-        down = list(reversed(pv[:pv.index(lca)]))
-        return up + down
-
     def _shortest_path(self, graph, start, goal):
         q = deque([start]); prev = {start: None}
         while q:
@@ -310,7 +263,7 @@ class Stage1Maze:
         self.green_edges_done.clear()
         self.phase = "idle"; self.msg = "Reset."
         self.nodes_expanded = 0; self.path_cost = 0
-        self.execution_time = "0.0 ms"
+        self.execution_time = "0.0 µs"
         self.mouse_visible = False; self.mouse_route = []
         self.mouse_seg = 0; self.mouse_t = 0.0
         self.solution_path = []; self.nobita_seg = 0
@@ -323,10 +276,8 @@ class Stage1Maze:
             self.msg = "Chưa có lần chạy nào để replay."
             return
         s = self._snap
-        # khôi phục trails + animation state
         self.blue_edges_done  = set(s["blue"])
         self.green_edges_done = set(s["green"])
-        # reset animation về đầu nhưng giữ solution
         self.mouse_route   = list(s["mouse_route"])
         self.mouse_seg     = 0;   self.mouse_t = 0.0
         self.mouse_visible = True
@@ -344,21 +295,22 @@ class Stage1Maze:
         if self.start_node not in graph or self.goal_node not in graph:
             self.msg = "Start/Goal not in graph!"; return
         if self.start_node == self.goal_node:
-            self.msg = "Start == Goal"; self.phase = "done"
-            self.nobita_mode = "at_goal"; return
+            self.msg = "Start == Goal"
+            self.phase = "done"
+            self.nobita_mode = "at_goal"
+            self.execution_time = "0.0 µs"
+            return
 
-        visited = []
         if self.selected_algorithm == "BFS":
-            path, visited, parent, exec_time = self._bfs_trace(graph, self.start_node, self.goal_node)
+            path, visited, nodes_expanded, exec_ms = bfs(graph, self.start_node, self.goal_node)
         elif self.selected_algorithm == "DFS":
-            path, visited, parent, exec_time = self._dfs_trace(graph, self.start_node, self.goal_node)
-        else:
-            path_mid, visited, nodes_exp, exec_time = ids(graph, self.start_node, self.goal_node)
+            path, visited, nodes_expanded, exec_ms = dfs(graph, self.start_node, self.goal_node)
+        else:  # IDS
+            path_mid, visited, nodes_expanded, exec_ms = ids(graph, self.start_node, self.goal_node)
             path = [self.start_node] + path_mid + ([self.goal_node] if path_mid else [])
-            parent = {self.start_node: None}
 
-        self.execution_time = exec_time
-        self.nodes_expanded = len(visited)
+        self.execution_time = self._fmt_exec_time(exec_ms) if isinstance(exec_ms, (int, float)) else str(exec_ms)
+        self.nodes_expanded = nodes_expanded
         self.solution_path  = path if len(path) >= 2 else []
         self.path_cost      = len(self.solution_path) - 1 if self.solution_path else 0
 
@@ -366,12 +318,8 @@ class Stage1Maze:
         targets = [self.start_node] + list(visited)
         if self.solution_path: targets.append(self.goal_node)
         route = [targets[0]]
-        if self.selected_algorithm in ("BFS","DFS"):
-            for i in range(len(targets)-1):
-                route.extend(self._tree_route(targets[i], targets[i+1], parent)[1:])
-        else:
-            for i in range(len(targets)-1):
-                route.extend(self._shortest_path(graph, targets[i], targets[i+1])[1:])
+        for i in range(len(targets)-1):
+            route.extend(self._shortest_path(graph, targets[i], targets[i+1])[1:])
 
         self.mouse_route   = route
         self.mouse_seg     = 0; self.mouse_t = 0.0
@@ -417,16 +365,16 @@ class Stage1Maze:
         self.msg = f"Loaded: {fn}"
 
     # ─────────────────────────────────────────
-    # UI layout  ← chuẩn, dùng làm khuôn
+    # UI layout
     # ─────────────────────────────────────────
     def _ui_rects(self):
         sw, sh = self.screen.get_size()
         pad  = self.PAD
         pw   = self.PANEL_W
-        bw   = pw - 2*pad          # full-width button
+        bw   = pw - 2*pad
         h    = self.BTN_H
         g    = self.GAP
-        y    = 60                  # sau title
+        y    = 60
 
         def btn(width=None, height=None):
             nonlocal y
@@ -434,27 +382,21 @@ class Stage1Maze:
             y += (height or h) + g
             return r
 
-        # ── algo select ──
         algo_bfs = btn(); algo_dfs = btn(); algo_ids = btn()
-
-        # ── actions ──
         y += 4
         run_btn    = btn()
         cancel_btn = btn()
         reset_btn  = btn()
 
-        # ── sliders ──
         y += 10
         sl_search_rect = pygame.Rect(pad, y+20, bw, 14); y += 52
         sl_nobita_rect = pygame.Rect(pad, y+20, bw, 14); y += 52
 
-        # ── edit map toggle ──
         edit_toggle = btn()
 
-        # ── editor group (2-column) ──
         editor_rects = {}
         if self.map_edit_open:
-            col_w   = (bw - 6) // 2   # 6 = gap between cols
+            col_w   = (bw - 6) // 2
             ed_h    = 30
             ed_g    = 6
             tools   = ["add","connect","del_node","del_edge","set_start","set_goal"]
@@ -467,12 +409,10 @@ class Stage1Maze:
                 editor_rects[tid] = pygame.Rect(rx, ry, col_w, ed_h)
             rows_used = math.ceil(len(tools)/2)
             y += rows_used*(ed_h+ed_g) + 4
-            # save / load cũng 2 cột
             editor_rects["save"] = pygame.Rect(pad,           y, col_w, ed_h)
             editor_rects["load"] = pygame.Rect(pad+col_w+6,   y, col_w, ed_h)
             y += ed_h + ed_g
 
-        # ── replay (chỉ khi done) ──
         replay_btn = None
         if self.phase == "done" and self._snap:
             y += 4
@@ -496,7 +436,7 @@ class Stage1Maze:
     # ─────────────────────────────────────────
     def _btn(self, rect, text, active=False, color=None, disabled=False):
         if disabled:
-            bg     = (70, 70, 70)      # xám/đen
+            bg     = (70, 70, 70)
             border = (90, 90, 90)
             fg     = (150, 150, 150)
         else:
@@ -524,7 +464,6 @@ class Stage1Maze:
         if self.victory_panel.visible: return
 
         ui = self._ui_rects()
-        # sync slider rects
         self.slider_search.rect = ui["slider_search"]
         self.slider_nobita.rect = ui["slider_nobita"]
 
@@ -543,22 +482,18 @@ class Stage1Maze:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 pos = event.pos
 
-                # ── algo ──
                 for key in ("bfs","dfs","ids"):
                     if ui[key].collidepoint(pos):
                         self.selected_algorithm = key.upper()
                         return
 
-                # ── actions ──
                 if ui["run"].collidepoint(pos):    self.run_selected_algorithm(); return
                 if ui["cancel"].collidepoint(pos): self.cancel_run();             return
                 if ui["reset"].collidepoint(pos):  self.reset_path();             return
 
-                # ── replay ──
                 if ui["replay"] and ui["replay"].collidepoint(pos):
                     self._replay(); return
 
-                # ── edit toggle ──
                 if ui["edit_toggle"].collidepoint(pos):
                     if self.phase in ("searching","returning","nobita_moving"):
                         self.msg = "Can't edit while running."; return
@@ -567,14 +502,11 @@ class Stage1Maze:
                         self.tool = None; self.edge_from = None
                     return
 
-                # ── back ──
                 if ui["back"].collidepoint(pos):
                     self.stage_manager.change_stage("stage_select"); return
 
-                # ── lock edit while running ──
                 if self.phase in ("searching","returning","nobita_moving"): return
 
-                # ── editor buttons ──
                 if self.map_edit_open:
                     ed = ui["editor"]
                     for tid in ("add","connect","del_node","del_edge","set_start","set_goal"):
@@ -584,7 +516,6 @@ class Stage1Maze:
                     if "load" in ed and ed["load"].collidepoint(pos):
                         self.load_map() if os.path.exists(self.map_file) else setattr(self,"msg","No saved map."); return
 
-                # ── map canvas clicks (editor) ──
                 if not self.map_edit_open: return
                 if not mr.collidepoint(pos): return
                 self._handle_canvas_click(pos, mr)
@@ -650,7 +581,6 @@ class Stage1Maze:
             if t >= 1.0: return seg+1, 0.0, False, (a,b)
             return seg, t, False, None
 
-        # ── SEARCHING ──
         if self.phase == "searching":
             self.mouse_seg, self.mouse_t, done, fe = step(
                 self.mouse_route, self.mouse_seg, self.mouse_t, self.mouse_speed_px)
@@ -665,7 +595,6 @@ class Stage1Maze:
                 self.mouse_seg = 0; self.mouse_t = 0.0; self.mouse_visible = True
             return
 
-        # ── RETURNING ──
         if self.phase == "returning":
             self.mouse_seg, self.mouse_t, done, fe = step(
                 self.mouse_route, self.mouse_seg, self.mouse_t, self.mouse_speed_px)
@@ -677,7 +606,6 @@ class Stage1Maze:
                 self.nobita_mode = "moving"; self.nobita_seg = 0; self.nobita_t = 0.0
             return
 
-        # ── NOBITA MOVING ──
         if self.phase == "nobita_moving":
             self.nobita_seg, self.nobita_t, done, fe = step(
                 self.solution_path, self.nobita_seg, self.nobita_t, self.nobita_speed_px)
@@ -686,14 +614,14 @@ class Stage1Maze:
             if done or self.nobita_seg >= len(self.solution_path)-1:
                 self.phase = "done"; self.msg = "Done!"
                 self.nobita_mode = "at_goal"
-                # Tìm chỗ gọi victory_panel.show() – trong update(), phase nobita_moving:
                 self.victory_panel.show(
                     next_stage_id     = "stage2",
                     next_stage_unlock = "stage2",
                     title    = "CHẶNG 1 HOÀN THÀNH!",
                     subtitle = "Nobita đã tìm thấy Doraemon!",
-                    nodes_visited = self.nodes_expanded,   # ← thêm
-                    path_cost     = self.path_cost,        # ← thêm
+                    nodes_visited = self.nodes_expanded,
+                    path_cost     = self.path_cost,
+                    exec_time     = self.execution_time,
                 )
 
     # ─────────────────────────────────────────
@@ -705,17 +633,14 @@ class Stage1Maze:
         mr  = self._map_rect()
         npx = self._nodes_px(mr)
 
-        # sync sliders
         self.slider_search.rect = ui["slider_search"]
         self.slider_nobita.rect = ui["slider_nobita"]
 
-        # ── background ──
         self.screen.fill(self.c_bg)
         if self.bg_raw:
             bg = pygame.transform.scale(self.bg_raw, (mr.w, mr.h))
             self.screen.blit(bg, (mr.x, mr.y))
 
-        # ── editor overlay ──
         if self.map_edit_open:
             for (a,b) in self.road_edges:
                 if a in npx and b in npx:
@@ -728,7 +653,6 @@ class Stage1Maze:
                 pygame.draw.circle(self.screen,col,(x,y),r)
                 pygame.draw.circle(self.screen,(15,15,15),(x,y),r,2)
 
-        # ── trails ──
         for (a,b) in self.blue_edges_done:
             if a in npx and b in npx:
                 pygame.draw.line(self.screen,self.BLUE,npx[a],npx[b],self.BLUE_TH)
@@ -736,7 +660,6 @@ class Stage1Maze:
             if a in npx and b in npx:
                 pygame.draw.line(self.screen,self.GREEN,npx[a],npx[b],self.GREEN_TH)
 
-        # ── partial segment ──
         def draw_partial(route, seg, t, col, thick):
             if not route or seg >= len(route)-1: return None
             a,b = route[seg], route[seg+1]
@@ -753,7 +676,6 @@ class Stage1Maze:
             thick = self.BLUE_TH if self.phase=="searching" else self.GREEN_TH
             mouse_pos = draw_partial(self.mouse_route, self.mouse_seg, self.mouse_t, col, thick)
 
-        # ── characters ──
         char_h  = max(40, int(sh*0.08))
         mouse_h = max(22, int(sh*0.045))
 
@@ -776,84 +698,53 @@ class Stage1Maze:
                 mouse_pos = npx.get(self.mouse_route[idx])
             self._blit_scaled(self.mouse_img_raw, mouse_pos, mouse_h)
 
-        # ════════════════════════════════
         # LEFT PANEL
-        # ════════════════════════════════
         panel = pygame.Surface((self.PANEL_W, sh), pygame.SRCALPHA)
         panel.fill((30, 33, 36, 200))
         self.screen.blit(panel, (0,0))
         pygame.draw.line(self.screen,(70,75,80),(self.PANEL_W,0),(self.PANEL_W,sh),2)
 
-        # title
         self.screen.blit(self.title_font.render("CHẶNG 1", True, (255,200,60)), (self.PAD,10))
         self.screen.blit(self.font.render("Maze / Graph", True, (180,180,180)),  (self.PAD,32))
 
-        # algo
         self._btn(ui["bfs"],"BFS", active=(self.selected_algorithm=="BFS"))
         self._btn(ui["dfs"],"DFS", active=(self.selected_algorithm=="DFS"))
         self._btn(ui["ids"],"IDS", active=(self.selected_algorithm=="IDS"))
 
-        # actions
         is_running = self.phase in ("searching", "returning", "nobita_moving")
 
-        # actions
-        self._btn(ui["run"], "▶ RUN AI",
-                color=(46, 204, 113),
-                disabled=is_running)
+        self._btn(ui["run"], "▶ RUN AI", color=(46, 204, 113), disabled=is_running)
+        self._btn(ui["cancel"], "■ CANCEL", color=(231, 76, 60), disabled=(not is_running))
+        self._btn(ui["reset"], "↺ RESET PATH", color=(155, 89, 182))
 
-        # giống chặng 5: idle -> disabled (đen/xám), running -> đỏ
-        self._btn(ui["cancel"], "■ CANCEL",
-                color=(231, 76, 60),
-                disabled=(not is_running))
-
-        self._btn(ui["reset"], "↺ RESET PATH",
-                color=(155, 89, 182))
-
-        # sliders
         self.slider_search.draw(self.screen, self.font)
         self.slider_nobita.draw(self.screen, self.font)
 
-        # edit map toggle
         lbl_edit = "EDIT MAP  [-]" if self.map_edit_open else "EDIT MAP  [+]"
         self._btn(ui["edit_toggle"], lbl_edit, active=self.map_edit_open)
 
-        # editor 2-col buttons
         if self.map_edit_open:
             ed = ui["editor"]
             labels = {
-                "add":       "ADD NODE",
-                "connect":   "CONNECT",
-                "del_node":  "DEL NODE",
-                "del_edge":  "DEL EDGE",
-                "set_start": "SET START",
-                "set_goal":  "SET GOAL",
-                "save":      "SAVE",
-                "load":      "LOAD",
+                "add": "ADD NODE", "connect": "CONNECT", "del_node": "DEL NODE",
+                "del_edge": "DEL EDGE", "set_start": "SET START", "set_goal": "SET GOAL",
+                "save": "SAVE", "load": "LOAD",
             }
             for tid, lbl in labels.items():
                 if tid in ed:
                     self._btn(ed[tid], lbl, active=(self.tool==tid))
 
-        # replay button
         if ui["replay"]:
             self._btn(ui["replay"], "⟳ REPLAY", color=(230,126,34))
 
-        # back
         self._btn(ui["back"], "◀ BACK", color=(231,76,60))
 
-        # ── STATS (bottom-left, ở trên BACK) ──
         self._draw_stats(sh, ui["back"])
 
-        # ── victory panel ──
         self.victory_panel.update()
         self.victory_panel.draw()
 
     def _draw_stats(self, sh, back_rect):
-        """
-        Hiển thị thông số phía dưới panel trái, ngay trên nút BACK.
-        Trạng thái / Nodes duyệt / Cost đến đích
-        """
-        # phase → label dễ đọc
         phase_label = {
             "idle":          "Idle",
             "searching":     "🔍 Searching...",
@@ -866,14 +757,15 @@ class Stage1Maze:
             ("Trạng thái",  phase_label),
             ("Nodes duyệt", str(self.nodes_expanded)),
             ("Chi phí",     str(self.path_cost)),
+            ("Thời gian",   self.execution_time),
         ]
         line_h = 18
         total_h = len(lines) * line_h + 8
         y0 = back_rect.top - total_h - 10
 
         for i, (key, val) in enumerate(lines):
-            y = y0 + i*line_h
+            y = y0 + i * line_h
             k_surf = self.small_font.render(f"{key}:", True, (160,160,160))
-            v_surf = self.small_font.render(val,       True, (255,220,80))
+            v_surf = self.small_font.render(str(val), True, (255,220,80))
             self.screen.blit(k_surf, (self.PAD, y))
             self.screen.blit(v_surf, (self.PAD + k_surf.get_width() + 4, y))
