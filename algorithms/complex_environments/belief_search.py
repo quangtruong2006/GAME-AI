@@ -43,10 +43,6 @@ def _build_simple_graph(rows, cols, blocked):
 
 
 def _bfs_simple(rows, cols, blocked, start, goal):
-    """
-    BFS đơn giản start→goal.
-    Trả về (actions, pos_sequence) hoặc ([], [start]) nếu start==goal.
-    """
     if start == goal:
         return [], [start]
 
@@ -54,16 +50,22 @@ def _bfs_simple(rows, cols, blocked, start, goal):
     if start not in graph or goal not in graph:
         return [], []
 
-    path_mid, _, _, _ = bfs(graph, start, goal)
-
-    # Kiểm tra bfs trả về gì: có thể là [] khi không tìm được
-    # hoặc list các node trung gian (không gồm start, không gồm goal)
-    # → cần test với bfs() thực tế của bạn
-    if path_mid is None:
+    # ════════════════════════════════════════════════
+    # DEBUG: Xem bfs() trả về gì
+    # ════════════════════════════════════════════════
+    result = bfs(graph, start, goal)
+    print(f"[DEBUG] bfs() returned: {type(result)}")
+    print(f"[DEBUG] content: {result if not isinstance(result, list) or len(result) < 10 else result[:10]}")
+    
+    # Xử lý theo kiểu
+    if isinstance(result, tuple):
+        path_mid = result[0]
+    else:
+        path_mid = result
+    
+    if path_mid is None or not path_mid:
         return [], []
 
-    # Ghép đường đi đầy đủ
-    # Kiểm tra xem path_mid đã gồm start/goal chưa
     full = _make_full_path(start, goal, path_mid)
     return _path_to_actions(full)
 

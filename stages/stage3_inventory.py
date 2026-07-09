@@ -1,9 +1,9 @@
+# File: stages/stage3_inventory.py
 import pygame
 import math
 import os
 import random
 import json
-import time
 from ui.victory_panel import VictoryPanel
 from algorithms.local.hill_climbing import step_hill_climbing
 from algorithms.local.simulated_annealing import step_simulated_annealing
@@ -66,7 +66,7 @@ class Slider:
 class Stage3Inventory:
     """
     Chặng 3 – Local Search trên lưới bảo bối.
-    Đã thêm hiển thị "Thời gian" ở panel trái và victory panel (đồng bộ với stage 1 & 2).
+    Panel trái theo khuôn stage1/2.
     """
 
     PANEL_W = 220
@@ -132,8 +132,6 @@ class Stage3Inventory:
         self.steps_count        = 0
         self.current_fitness    = 0
         self.target_item_id     = 14
-        self.execution_time     = "0.0 µs"          # ← THÊM
-        self.run_start_time     = 0                 # ← THÊM (đo thời gian thực)
 
         self.temperature   = 100.0
         self.cooling_rate  = 0.90
@@ -160,16 +158,8 @@ class Stage3Inventory:
         self.victory_panel = VictoryPanel(screen, stage_manager)
 
     # ─────────────────────────────────────────
-    # Helpers
+    # Map helpers
     # ─────────────────────────────────────────
-    def _fmt_exec_time(self, ms: float) -> str:
-        """Format thời gian AI: µs → ms → s"""
-        if ms < 1.0:
-            return f"{ms*1000:.1f} µs"
-        if ms < 1000.0:
-            return f"{ms:.2f} ms"
-        return f"{ms/1000.0:.2f} s"
-
     def _create_initial_grid(self):
         map_path = os.path.join("assets", "maps", "stage3_map.json")
         if os.path.exists(map_path):
@@ -243,11 +233,9 @@ class Stage3Inventory:
         self.temperature     = 100.0
         self.beam_states     = []
         self.anim_swap       = None
-        self.execution_time  = "0.0 µs"
-        self.run_start_time  = 0
 
     # ─────────────────────────────────────────
-    # UI rects
+    # UI rects (khuôn stage1)
     # ─────────────────────────────────────────
     def _ui_rects(self):
         pad  = self.PAD
@@ -264,24 +252,30 @@ class Stage3Inventory:
             y += (hh or h) + g
             return r
 
+        # algo
         hc_btn   = btn()
         sa_btn   = btn()
         beam_btn = btn()
 
+        # actions
         y += 4
         run_btn    = btn()
         cancel_btn = btn()
         reset_btn  = btn()
 
+        # slider tốc độ AI
         y += 10
         slider_rect = pygame.Rect(pad, y + 20, bw, 14)
         y += 50
 
+        # đổi bảo bối mục tiêu
         y += 4
         select_item_btn = btn()
 
+        # edit toggle
         edit_toggle = btn()
 
+        # editor group (2 cột)
         editor_rects = {}
         if self.is_editing:
             col_w  = (bw - 6) // 2
@@ -298,6 +292,7 @@ class Stage3Inventory:
                 )
             rows_used = math.ceil(len(tools) / 2)
             y += rows_used * (ed_h + ed_g) + 4
+            # save
             editor_rects["save"] = pygame.Rect(pad, y, bw, ed_h)
             y += ed_h + ed_g
 
@@ -317,6 +312,9 @@ class Stage3Inventory:
             "back":        back_btn,
         }
 
+    # ─────────────────────────────────────────
+    # Draw button helper
+    # ─────────────────────────────────────────
     def _btn(self, rect, text, color=(55, 60, 65), active=False, disabled=False):
         if disabled:
             bg     = (70, 70, 70)
@@ -332,6 +330,9 @@ class Stage3Inventory:
         lbl = self.font.render(text, True, fg)
         self.screen.blit(lbl, lbl.get_rect(center=rect.center))
 
+    # ─────────────────────────────────────────
+    # Status text
+    # ─────────────────────────────────────────
     def _status_text(self):
         return {
             "idle":      "Idle",
@@ -340,14 +341,13 @@ class Stage3Inventory:
         }.get(self.phase, self.phase)
 
     # ─────────────────────────────────────────
-    # Stats (ĐÃ THÊM THỜI GIAN)
+    # Stats block (góc trái dưới, trên BACK)
     # ─────────────────────────────────────────
     def _draw_stats(self, back_rect):
         lines = [
             ("Trạng thái", self._status_text()),
             ("Bước",       str(self.steps_count)),
             ("Fitness",    f"{self.current_fitness}/100"),
-            ("Thời gian",  self.execution_time),           # ← ĐÃ THÊM
         ]
         line_h  = 18
         total_h = len(lines) * line_h + 4
@@ -356,24 +356,66 @@ class Stage3Inventory:
         for i, (k, v) in enumerate(lines):
             y    = y0 + i * line_h
             ks   = self.small_font.render(f"{k}:", True, (160, 160, 160))
-            vs   = self.small_font.render(str(v),  True, (255, 220, 80))
+            vs   = self.small_font.render(v,       True, (255, 220, 80))
             self.screen.blit(ks, (self.PAD, y))
             self.screen.blit(vs, (self.PAD + ks.get_width() + 4, y))
+    def _draw_fail_panel(self):
+        ov = pygame.Surface((self.sw, self.sh), pygame.SRCALPHA)
+        ov.fill((0, 0, 0, 160))
+        self.screen.blit(ov, (0, 0))
 
+        box_w, box_h = 420, 220
+        box = pygame.Rect((self.sw - box_w) // 2, (self.sh - box_h) // 2, box_w, box_h)
+        pygame.draw.rect(self.screen, (40, 20, 20), box, border_radius=12)
+        pygame.draw.rect(self.screen, (200, 60, 60), box, width=2, border_radius=12)
+
+        title = self.title_font.render("AI BỊ KẸT!", True, (255, 100, 100))
+        self.screen.blit(title, title.get_rect(center=(box.centerx, box.top + 50)))
+
+        sub = self.font.render(
+            f"Không còn nước đi tốt hơn (Fitness: {self.current_fitness}/100)",
+            True, (220, 220, 220)
+        )
+        self.screen.blit(sub, sub.get_rect(center=(box.centerx, box.top + 90)))
+
+        retry_rect = pygame.Rect(box.centerx - 170, box.bottom - 60, 160, 40)
+        back_rect  = pygame.Rect(box.centerx + 10,  box.bottom - 60, 160, 40)
+
+        self._btn(retry_rect, "↺ THỬ LẠI", color=(155, 89, 182))
+        self._btn(back_rect,  "◀ QUAY LẠI", color=(231, 76, 60))
+
+        return retry_rect, back_rect
     # ─────────────────────────────────────────
     # Events
     # ─────────────────────────────────────────
     def handle_events(self, events):
+        # ── Fail panel xử lý trước ──
+        if self.phase == "failed":
+            for event in events:
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if hasattr(self, "_fail_rects"):
+                        retry_rect, back_rect = self._fail_rects
+                        if retry_rect.collidepoint(event.pos):
+                            self._full_reset()
+                            return
+                        if back_rect.collidepoint(event.pos):
+                            self.stage_manager.change_stage("stage_select")
+                            return
+            return
+        # ── Victory panel xử lý trước ──
         panel_action = self.victory_panel.handle_events(events)
         if panel_action == "replay":
+            # ✅ FIX: Chỉ đóng panel, KHÔNG tự động chạy lại
             return
         if self.victory_panel.visible:
             return
 
         ui = self._ui_rects()
+        # sync slider
         self.slider_speed.rect = ui["slider"]
 
         for event in events:
+            # slider
             if self.slider_speed.handle_event(event):
                 self.step_delay_ms = self.slider_speed.value
 
@@ -383,7 +425,10 @@ class Stage3Inventory:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 pos = event.pos
 
+                # ── panel ──
                 if pos[0] < self.PANEL_W:
+
+                    # algo select
                     if ui["hc"].collidepoint(pos) and self.phase != "running":
                         self.selected_algorithm = "Hill Climbing"
                         return
@@ -394,6 +439,7 @@ class Stage3Inventory:
                         self.selected_algorithm = "Local Beam"
                         return
 
+                    # actions
                     if ui["run"].collidepoint(pos):
                         if self.phase in ("idle", "completed"):
                             self.steps_count     = 0
@@ -401,11 +447,11 @@ class Stage3Inventory:
                             self.beam_states     = []
                             self.anim_swap       = None
                             self.last_step_time  = 0
-                            self.run_start_time  = time.perf_counter()      # ← BẮT ĐẦU ĐO THỜI GIAN
                             self.phase           = "running"
                         return
 
                     if ui["cancel"].collidepoint(pos):
+                        # ✅ FIX: Chỉ dừng AI, không hiện overlay thất bại
                         if self.phase == "running":
                             self.phase = "idle"
                         return
@@ -414,6 +460,7 @@ class Stage3Inventory:
                         self._full_reset()
                         return
 
+                    # đổi bảo bối mục tiêu
                     if ui["select_item"].collidepoint(pos) and self.phase != "running":
                         for _ in range(45):
                             self.target_item_id += 1
@@ -423,15 +470,18 @@ class Stage3Inventory:
                                 break
                         return
 
+                    # edit toggle
                     if ui["edit_toggle"].collidepoint(pos):
                         self.is_editing = not self.is_editing
                         self.edit_mode  = None
                         return
 
+                    # back
                     if ui["back"].collidepoint(pos):
                         self.stage_manager.change_stage("stage_select")
                         return
 
+                    # editor buttons
                     if self.is_editing:
                         ed = ui["editor"]
                         for tid in ("add_item", "add_obs", "set_goal", "erase"):
@@ -443,6 +493,7 @@ class Stage3Inventory:
                             self.is_editing = False
                             return
 
+                # ── canvas ──
                 elif (self.is_editing and self.edit_mode and
                       self.start_x <= pos[0] <= self.start_x + self.grid_w and
                       self.start_y <= pos[1] <= self.start_y + self.grid_h):
@@ -479,6 +530,7 @@ class Stage3Inventory:
             return
         now = pygame.time.get_ticks()
 
+        # đang có animation swap
         if self.anim_swap:
             if now - self.anim_swap["start_time"] >= 150:
                 self.grid            = self.anim_swap["next_state"]
@@ -496,11 +548,9 @@ class Stage3Inventory:
         if self.phase != "running":
             return
 
+        # ✅ Kiểm tra thắng
         if self.current_fitness >= 100:
             self.phase = "completed"
-            elapsed = (time.perf_counter() - self.run_start_time) * 1000
-            self.execution_time = self._fmt_exec_time(elapsed)
-            
             self.victory_panel.show(
                 next_stage_id     = "stage4",
                 next_stage_unlock = "stage4",
@@ -508,7 +558,6 @@ class Stage3Inventory:
                 subtitle = f"Thu thập sau {self.steps_count} bước!",
                 nodes_visited = self.steps_count,
                 path_cost     = self.steps_count,
-                exec_time     = self.execution_time,          # ← ĐÃ THÊM
             )
             return
 
@@ -538,119 +587,15 @@ class Stage3Inventory:
                 self.current_fitness = self.calculate_fitness(self.grid)
                 self.steps_count    += 1
         else:
-            self.phase = "idle"
+            # ✅ AI bị kẹt (local optimum / hết nước đi) → hiện panel thua
+            if self.selected_algorithm in ("Hill Climbing", "Simulated Annealing"):
+                self.phase = "failed"
+            else:
+                self.phase = "idle"
 
     # ─────────────────────────────────────────
-    # Draw
+    # Draw helpers
     # ─────────────────────────────────────────
-    def draw(self):
-        ui = self._ui_rects()
-        self.slider_speed.rect = ui["slider"]
-
-        if self.bg_image:
-            self.screen.blit(self.bg_image, (self.PANEL_W, 0))
-        else:
-            self.screen.fill((10, 15, 25))
-        ov = pygame.Surface((self.sw - self.PANEL_W, self.sh), pygame.SRCALPHA)
-        ov.fill((10, 15, 30, 60))
-        self.screen.blit(ov, (self.PANEL_W, 0))
-
-        now_t = pygame.time.get_ticks()
-        for r in range(self.rows):
-            for c in range(self.cols):
-                x   = self.start_x + c * self.cell_size
-                y   = self.start_y + r * self.cell_size
-                val = self.grid[r][c]
-                fy  = math.sin(now_t * 0.003 + r + c) * 6
-
-                is_swapping = False
-                if self.anim_swap:
-                    if ((r, c) == self.anim_swap["item1"]["pos"] or
-                            (r, c) == self.anim_swap["item2"]["pos"]):
-                        is_swapping = True
-
-                if not is_swapping:
-                    if self.is_editing:
-                        pygame.draw.rect(self.screen, (0, 150, 255),
-                                         pygame.Rect(x, y, self.cell_size, self.cell_size), 1)
-                    self._draw_single_item(val, x, y, int(fy))
-
-        if self.anim_swap:
-            p  = (now_t - self.anim_swap["start_time"]) / 150.0
-            p  = max(0.0, min(1.0, p))
-            p  = p * p * (3 - 2 * p)
-            r1, c1 = self.anim_swap["item1"]["pos"]
-            v1     = self.anim_swap["item1"]["val"]
-            r2, c2 = self.anim_swap["item2"]["pos"]
-            v2     = self.anim_swap["item2"]["val"]
-            x1 = self.start_x + c1 * self.cell_size
-            y1 = self.start_y + r1 * self.cell_size
-            x2 = self.start_x + c2 * self.cell_size
-            y2 = self.start_y + r2 * self.cell_size
-            fy = math.sin(now_t * 0.003) * 6
-            self._draw_single_item(v1, x1 + (x2 - x1) * p, y1 + (y2 - y1) * p, int(fy))
-            self._draw_single_item(v2, x2 + (x1 - x2) * p, y2 + (y1 - y2) * p, int(fy))
-
-        # LEFT PANEL
-        panel = pygame.Surface((self.PANEL_W, self.sh), pygame.SRCALPHA)
-        panel.fill((30, 33, 36, 210))
-        self.screen.blit(panel, (0, 0))
-        pygame.draw.line(self.screen, (70, 75, 80),
-                         (self.PANEL_W, 0), (self.PANEL_W, self.sh), 2)
-
-        self.screen.blit(self.title_font.render("CHẶNG 3",       True, (255, 200, 60)),
-                         (self.PAD, 10))
-        self.screen.blit(self.font.render("Local Search", True, (180, 180, 180)),
-                         (self.PAD, 32))
-
-        self._btn(ui["hc"],   "Hill Climbing",
-                  (40, 110, 190) if self.selected_algorithm == "Hill Climbing" else (55, 60, 65))
-        self._btn(ui["sa"],   "Sim. Annealing",
-                  (40, 110, 190) if self.selected_algorithm == "Simulated Annealing" else (55, 60, 65))
-        self._btn(ui["beam"], "Local Beam",
-                  (40, 110, 190) if self.selected_algorithm == "Local Beam" else (55, 60, 65))
-
-        self._btn(ui["run"], "▶ RUN AI",
-                color=(46, 204, 113),
-                disabled=(self.phase == "running"))
-
-        self._btn(ui["cancel"], "■ CANCEL",
-                color=(231, 76, 60),
-                disabled=(self.phase != "running"))
-
-        self._btn(ui["reset"], "↺ RESET MAP",
-                color=(155, 89, 182))
-
-        self.slider_speed.draw(self.screen, self.font)
-
-        item_no = self.target_item_id - 9
-        self._btn(ui["select_item"], f"MỤC TIÊU #{item_no}", color=(241, 196, 15))
-
-        lbl_edit = "EDIT MAP  [-]" if self.is_editing else "EDIT MAP  [+]"
-        self._btn(ui["edit_toggle"], lbl_edit,
-                  (40, 110, 190) if self.is_editing else (55, 60, 65))
-
-        if self.is_editing:
-            ed = ui["editor"]
-            lbl_map = {
-                "add_item": "Đặt BB",
-                "add_obs":  "Vật cản",
-                "set_goal": "Cục Vàng",
-                "erase":    "Tẩy",
-                "save":     "SAVE MAP",
-            }
-            for tid, lbl in lbl_map.items():
-                if tid in ed:
-                    self._btn(ed[tid], lbl,
-                              (40, 110, 190) if self.edit_mode == tid else (55, 60, 65))
-
-        self._btn(ui["back"], "◀ BACK", color=(231, 76, 60))
-
-        self._draw_stats(ui["back"])
-
-        self.victory_panel.update()
-        self.victory_panel.draw()
-
     def _draw_single_item(self, val, x, y, float_y):
         if 10 <= val <= 54:
             img = self.item_images.get(val)
@@ -684,3 +629,135 @@ class Stage3Inventory:
                         if ddx or ddy:
                             self.screen.blit(ms, (dx_ + ddx, dy_ + ddy))
                 self.screen.blit(img, (dx_, dy_))
+
+    # ─────────────────────────────────────────
+    # Draw
+    # ─────────────────────────────────────────
+    def draw(self):
+        ui = self._ui_rects()
+
+        # sync slider rect
+        self.slider_speed.rect = ui["slider"]
+
+        # ── background ──
+        if self.bg_image:
+            self.screen.blit(self.bg_image, (self.PANEL_W, 0))
+        else:
+            self.screen.fill((10, 15, 25))
+        ov = pygame.Surface((self.sw - self.PANEL_W, self.sh), pygame.SRCALPHA)
+        ov.fill((10, 15, 30, 60))
+        self.screen.blit(ov, (self.PANEL_W, 0))
+
+        # ── lưới items ──
+        now_t = pygame.time.get_ticks()
+        for r in range(self.rows):
+            for c in range(self.cols):
+                x   = self.start_x + c * self.cell_size
+                y   = self.start_y + r * self.cell_size
+                val = self.grid[r][c]
+                fy  = math.sin(now_t * 0.003 + r + c) * 6
+
+                # bỏ qua ô đang swap
+                is_swapping = False
+                if self.anim_swap:
+                    if ((r, c) == self.anim_swap["item1"]["pos"] or
+                            (r, c) == self.anim_swap["item2"]["pos"]):
+                        is_swapping = True
+
+                if not is_swapping:
+                    if self.is_editing:
+                        pygame.draw.rect(self.screen, (0, 150, 255),
+                                         pygame.Rect(x, y, self.cell_size, self.cell_size), 1)
+                    self._draw_single_item(val, x, y, int(fy))
+
+        # ── swap animation ──
+        if self.anim_swap:
+            p  = (now_t - self.anim_swap["start_time"]) / 150.0
+            p  = max(0.0, min(1.0, p))
+            p  = p * p * (3 - 2 * p)   # smoothstep
+            r1, c1 = self.anim_swap["item1"]["pos"]
+            v1     = self.anim_swap["item1"]["val"]
+            r2, c2 = self.anim_swap["item2"]["pos"]
+            v2     = self.anim_swap["item2"]["val"]
+            x1 = self.start_x + c1 * self.cell_size
+            y1 = self.start_y + r1 * self.cell_size
+            x2 = self.start_x + c2 * self.cell_size
+            y2 = self.start_y + r2 * self.cell_size
+            fy = math.sin(now_t * 0.003) * 6
+            self._draw_single_item(v1, x1 + (x2 - x1) * p, y1 + (y2 - y1) * p, int(fy))
+            self._draw_single_item(v2, x2 + (x1 - x2) * p, y2 + (y1 - y2) * p, int(fy))
+
+        # ════════════════════════════════
+        # LEFT PANEL (khuôn stage1)
+        # ════════════════════════════════
+        panel = pygame.Surface((self.PANEL_W, self.sh), pygame.SRCALPHA)
+        panel.fill((30, 33, 36, 210))
+        self.screen.blit(panel, (0, 0))
+        pygame.draw.line(self.screen, (70, 75, 80),
+                         (self.PANEL_W, 0), (self.PANEL_W, self.sh), 2)
+
+        # title
+        self.screen.blit(self.title_font.render("CHẶNG 3",       True, (255, 200, 60)),
+                         (self.PAD, 10))
+        self.screen.blit(self.font.render("Local Search", True, (180, 180, 180)),
+                         (self.PAD, 32))
+
+        # algo
+        self._btn(ui["hc"],   "Hill Climbing",
+                  (40, 110, 190) if self.selected_algorithm == "Hill Climbing" else (55, 60, 65))
+        self._btn(ui["sa"],   "Sim. Annealing",
+                  (40, 110, 190) if self.selected_algorithm == "Simulated Annealing" else (55, 60, 65))
+        self._btn(ui["beam"], "Local Beam",
+                  (40, 110, 190) if self.selected_algorithm == "Local Beam" else (55, 60, 65))
+
+        # actions
+        self._btn(ui["run"], "▶ RUN AI",
+                color=(46, 204, 113),
+                disabled=(self.phase == "running"))
+
+        # giống chặng 5: idle -> disabled (đen/xám), running -> đỏ
+        self._btn(ui["cancel"], "■ CANCEL",
+                color=(231, 76, 60),
+                disabled=(self.phase != "running"))
+
+        self._btn(ui["reset"], "↺ RESET MAP",
+                color=(155, 89, 182))
+
+        # slider tốc độ
+        self.slider_speed.draw(self.screen, self.font)
+
+        # đổi bảo bối
+        item_no = self.target_item_id - 9
+        self._btn(ui["select_item"], f"MỤC TIÊU #{item_no}", color=(241, 196, 15))
+
+        # edit toggle
+        lbl_edit = "EDIT MAP  [-]" if self.is_editing else "EDIT MAP  [+]"
+        self._btn(ui["edit_toggle"], lbl_edit,
+                  (40, 110, 190) if self.is_editing else (55, 60, 65))
+
+        # editor 2 cột
+        if self.is_editing:
+            ed = ui["editor"]
+            lbl_map = {
+                "add_item": "Đặt BB",
+                "add_obs":  "Vật cản",
+                "set_goal": "Cục Vàng",
+                "erase":    "Tẩy",
+                "save":     "SAVE MAP",
+            }
+            for tid, lbl in lbl_map.items():
+                if tid in ed:
+                    self._btn(ed[tid], lbl,
+                              (40, 110, 190) if self.edit_mode == tid else (55, 60, 65))
+
+        # back
+        self._btn(ui["back"], "◀ BACK", color=(231, 76, 60))
+
+        # stats góc trái dưới
+        self._draw_stats(ui["back"])
+
+        # ── Victory panel ──
+        self.victory_panel.update()
+        self.victory_panel.draw()
+        if self.phase == "failed":
+            self._fail_rects = self._draw_fail_panel()

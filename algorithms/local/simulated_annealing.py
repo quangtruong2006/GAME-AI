@@ -3,7 +3,26 @@ import math
 from algorithms.local.hill_climbing import step_hill_climbing
 
 def step_simulated_annealing(env):
-    if env.temperature <= 0.01: 
+    # ════════════════════════════════════════════
+    # Khởi tạo tham số lần đầu (nếu chưa có)
+    # ════════════════════════════════════════════
+    if not hasattr(env, 'temperature'):
+        env.temperature = 1000.0
+        env.cooling_rate = 0.995
+        env.min_temperature = 0.01
+    
+    # Nếu có temperature nhưng chưa có min_temperature
+    if not hasattr(env, 'min_temperature'):
+        env.min_temperature = 0.01
+    
+    # Nếu có temperature nhưng chưa có cooling_rate
+    if not hasattr(env, 'cooling_rate'):
+        env.cooling_rate = 0.995
+    
+    # ════════════════════════════════════════════
+    # Chuyển sang Hill Climbing khi T quá thấp
+    # ════════════════════════════════════════════
+    if env.temperature <= env.min_temperature: 
         return step_hill_climbing(env)
 
     neighbors = env.get_neighbors(env.grid)

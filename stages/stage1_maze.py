@@ -296,41 +296,36 @@ class Stage1Maze:
             self.msg = "Start/Goal not in graph!"; return
         if self.start_node == self.goal_node:
             self.msg = "Start == Goal"
-            self.phase = "done"
-            self.nobita_mode = "at_goal"
-            self.execution_time = "0.0 µs"
-            return
+            self.phase = "done"; self.nobita_mode = "at_goal"
+            self.execution_time = "0.0 µs"; return
 
         if self.selected_algorithm == "BFS":
-            path, visited, nodes_expanded, exec_ms = bfs(graph, self.start_node, self.goal_node)
+            path, visited, mouse_trace, nodes_expanded, exec_ms = bfs(
+                graph, self.start_node, self.goal_node)
         elif self.selected_algorithm == "DFS":
-            path, visited, nodes_expanded, exec_ms = dfs(graph, self.start_node, self.goal_node)
+            path, visited, mouse_trace, nodes_expanded, exec_ms = dfs(
+                graph, self.start_node, self.goal_node)
         else:  # IDS
-            path_mid, visited, nodes_expanded, exec_ms = ids(graph, self.start_node, self.goal_node)
-            path = [self.start_node] + path_mid + ([self.goal_node] if path_mid else [])
+            path, visited, mouse_trace, nodes_expanded, exec_ms = ids(
+                graph, self.start_node, self.goal_node)
 
-        self.execution_time = self._fmt_exec_time(exec_ms) if isinstance(exec_ms, (int, float)) else str(exec_ms)
-        self.nodes_expanded = nodes_expanded
-        self.solution_path  = path if len(path) >= 2 else []
-        self.path_cost      = len(self.solution_path) - 1 if self.solution_path else 0
+        self.execution_time = (self._fmt_exec_time(exec_ms)
+                            if isinstance(exec_ms, (int, float)) else str(exec_ms))
+        self.nodes_expanded  = nodes_expanded
+        self.solution_path   = path if len(path) >= 2 else []
+        self.path_cost       = len(self.solution_path) - 1 if self.solution_path else 0
 
-        # xây mouse route
-        targets = [self.start_node] + list(visited)
-        if self.solution_path: targets.append(self.goal_node)
-        route = [targets[0]]
-        for i in range(len(targets)-1):
-            route.extend(self._shortest_path(graph, targets[i], targets[i+1])[1:])
-
-        self.mouse_route   = route
-        self.mouse_seg     = 0; self.mouse_t = 0.0
+        self.mouse_route   = mouse_trace
+        self.mouse_seg     = 0
+        self.mouse_t       = 0.0
         self.mouse_visible = True
-        self.phase = "searching"
-        self.msg   = f"Searching ({self.selected_algorithm})..."
+        self.phase         = "searching"
+        self.msg           = f"Searching ({self.selected_algorithm})..."
 
-        # lưu snapshot cho REPLAY
         self._snap = {
-            "blue": set(), "green": set(),
-            "mouse_route":   list(route),
+            "blue":          set(),
+            "green":         set(),
+            "mouse_route":   list(mouse_trace),
             "solution_path": list(self.solution_path),
         }
 
